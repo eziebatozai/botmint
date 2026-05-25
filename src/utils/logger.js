@@ -29,7 +29,7 @@ class Logger {
     console.log(chalk.green(`
     ╔══════════════════════════════════════════╗
     ║     🎋 BOTMINT FCFS - Auto Minter 🎋    ║
-    ║     The Bamboo Order Collection          ║
+    ║     The Bamboo Order (BASE CHAIN)        ║
     ╚══════════════════════════════════════════╝
     `));
   }

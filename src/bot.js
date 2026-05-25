@@ -233,7 +233,7 @@ class MintBot {
 
     if (receipt.status === 1) {
       Logger.success(`✅ MINT BERHASIL! Gas used: ${receipt.gasUsed.toString()}`);
-      Logger.success(`TX: https://etherscan.io/tx/${tx.hash}`);
+      Logger.success(`TX: https://basescan.org/tx/${tx.hash}`);
       this.notifier.mintSuccess(tx.hash, shortAddr);
       return { success: true, txHash: tx.hash, wallet: shortAddr };
     } else {

@@ -4,6 +4,7 @@ Bot auto-mint FCFS (First Come First Served) untuk koleksi **The Bamboo Order** 
 
 ## ⚡ Fitur
 
+- **Base Chain** - Optimized untuk Base L2 (gas super murah!)
 - **Auto-detect mint** - Monitoring otomatis kapan mint dibuka
 - **FCFS Speed** - Eksekusi secepat mungkin saat mint live
 - **Multi-wallet** - Support banyak wallet sekaligus (mint paralel)
@@ -12,11 +13,18 @@ Bot auto-mint FCFS (First Come First Served) untuk koleksi **The Bamboo Order** 
 - **Desktop notification** - Alert saat mint berhasil/gagal
 - **Monitor mode** - Pantau status mint tanpa eksekusi
 
+## 📋 Info Contract
+
+- **Chain:** Base (Chain ID: 8453)
+- **Contract:** `0x87ed2acc2e780fba347d67b4840f3619987bb8a5`
+- **Explorer:** https://basescan.org/address/0x87ed2acc2e780fba347d67b4840f3619987bb8a5
+
 ## 📋 Prerequisite
 
 - Node.js >= 18
-- RPC Provider (Alchemy / Infura / QuickNode) - WAJIB untuk kecepatan
-- ETH di wallet untuk gas + mint price
+- RPC Provider Base chain (publik gratis: https://mainnet.base.org)
+- ETH di wallet (di Base chain) untuk gas + mint price
+- Gas di Base sangat murah (<$0.01 per tx!)
 
 ## 🚀 Instalasi
 
@@ -47,14 +55,14 @@ nano .env
 
 ### Cara mendapatkan Contract Address:
 
-1. Buka koleksi di OpenSea: https://opensea.io/collection/the-bamboo-order
-2. Klik salah satu NFT yang sudah di-mint
-3. Di bagian "Details", copy **Contract Address**
-4. Atau cek di Etherscan jika sudah verified
+Contract sudah di-set otomatis:
+- **Address:** `0x87ed2acc2e780fba347d67b4840f3619987bb8a5`
+- **Chain:** Base (8453)
+- **Explorer:** https://basescan.org/address/0x87ed2acc2e780fba347d67b4840f3619987bb8a5
 
 ### Cara mendapatkan Mint Function:
 
-1. Buka contract di Etherscan
+1. Buka contract di BaseScan: https://basescan.org/address/0x87ed2acc2e780fba347d67b4840f3619987bb8a5#writeContract
 2. Tab "Contract" → "Write Contract"
 3. Cari function mint (biasanya: `mint`, `publicMint`, `claim`)
 4. Set di `MINT_FUNCTION` di .env
@@ -92,11 +100,11 @@ Bot langsung eksekusi mint tanpa cek status. Gunakan jika kamu sudah yakin mint 
 
 ## 🔧 Tips & Strategi FCFS
 
-1. **Gunakan RPC premium** (Alchemy/Infura paid plan) untuk latency rendah
-2. **Set gas tinggi** - Naikkan `PRIORITY_FEE_GWEI` (5-10 Gwei) untuk prioritas
+1. **Gunakan RPC premium** (Alchemy Base) untuk latency rendah
+2. **Gas di Base sangat murah** - Tapi tetap naikkan `PRIORITY_FEE_GWEI` sedikit untuk prioritas
 3. **Jalankan bot sebelum mint dibuka** - Gunakan mode `monitor`
 4. **Multi-wallet** - Tambahkan beberapa wallet untuk peluang lebih besar
-5. **VPS dekat node** - Gunakan VPS di region yang sama dengan RPC provider
+5. **Bridge ETH ke Base** - Pastikan wallet punya ETH di Base chain (bridge via https://bridge.base.org)
 
 ## 📂 Struktur File
 
@@ -126,6 +134,7 @@ botmint/
 3. **Test di testnet dulu** sebelum mainnet (set `CHAIN_ID=11155111` untuk Sepolia)
 4. **Risiko gas war** - Saat FCFS, gas bisa sangat mahal
 5. **DYOR** - Pastikan project legitimate sebelum mint
+6. **Bridge ETH ke Base** - Kamu butuh ETH di Base chain, bukan di Ethereum mainnet
 
 ## 🛡️ Keamanan
 
