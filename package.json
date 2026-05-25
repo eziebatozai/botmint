@@ -1,0 +1,22 @@
+{
+  "name": "botmint-fcfs",
+  "version": "1.0.0",
+  "description": "Auto Mint FCFS Bot for The Bamboo Order NFT Collection",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "monitor": "node src/monitor.js",
+    "test-connection": "node src/test-connection.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "dotenv": "^16.4.5",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "node-notifier": "^10.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
