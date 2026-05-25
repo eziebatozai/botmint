@@ -1,13 +1,10 @@
 /**
- * ABI untuk OpenSea SeaDrop mint mechanism.
+ * ABI untuk OpenSea SeaDrop FCFS (SIGNED_PRESALE) mint mechanism.
  * 
- * Contract: 0x87ed2acc2e780fba347d67b4840f3619987bb8a5 (The Bamboo Order - Base)
+ * PENTING: Untuk FCFS/Presale, user memanggil mintSigned() di SEADROP CONTRACT.
+ * Signature diperoleh dari OpenSea API sebelum mint.
  * 
- * PENTING: SeaDrop mint TIDAK dipanggil langsung ke NFT contract!
- * User memanggil fungsi mintPublic() di SEADROP CONTRACT,
- * lalu SeaDrop contract memanggil mintSeaDrop() di NFT contract.
- * 
- * Flow: User -> SeaDrop.mintPublic() -> NFTContract.mintSeaDrop()
+ * Flow: User -> OpenSea API (get signature) -> SeaDrop.mintSigned() -> NFTContract.mintSeaDrop()
  */
 
 // ABI untuk NFT Contract (ERC721SeaDrop) - untuk monitoring/read
@@ -29,9 +26,12 @@ const NFT_CONTRACT_ABI = [
   "function getAllowedSeaDrop() external view returns (address[])",
 ];
 
-// ABI untuk SeaDrop Contract - INI YANG DIPANGGIL USER UNTUK MINT!
+// ABI untuk SeaDrop Contract - MINT SIGNED untuk FCFS!
 const SEADROP_ABI = [
-  // Public mint - fungsi utama yang dipanggil user
+  // Signed mint - fungsi utama untuk FCFS/Presale
+  "function mintSigned(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity, tuple(uint80 mintPrice, uint16 maxTotalMintableByWallet, uint48 startTime, uint48 endTime, uint16 dropStageIndex, uint32 maxTokenSupplyForStage, uint16 feeBps, bool restrictFeeRecipients) mintParams, uint256 salt, bytes signature) external payable",
+
+  // Public mint - fallback jika perlu
   "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) external payable",
   
   // Get public drop info
@@ -62,6 +62,4 @@ module.exports = {
   SEADROP_ABI, 
   SEADROP_ADDRESSES, 
   OPENSEA_FEE_RECIPIENT,
-  // Keep backward compat
-  MINT_ABI: NFT_CONTRACT_ABI 
 };

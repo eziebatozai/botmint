@@ -6,11 +6,15 @@ const config = {
   rpcBackups: process.env.RPC_URLS_BACKUP ? process.env.RPC_URLS_BACKUP.split(',').map(u => u.trim()) : ['https://base.meowrpc.com', 'https://base.drpc.org'],
 
   // Contract
-  contractAddress: process.env.CONTRACT_ADDRESS || '0x87ed2acc2e780fba347d67b4840f3619987bb8a5',
-  mintFunction: process.env.MINT_FUNCTION || 'mint',
+  contractAddress: process.env.CONTRACT_ADDRESS || '',
   mintPrice: process.env.MINT_PRICE || '0',
   mintAmount: parseInt(process.env.MINT_AMOUNT || '1'),
   maxPerWallet: parseInt(process.env.MAX_PER_WALLET || '1'),
+
+  // FCFS / Signed Presale
+  collectionSlug: process.env.COLLECTION_SLUG || '',
+  stageIndex: parseInt(process.env.STAGE_INDEX || '2'),
+  opensea_api_key: process.env.OPENSEA_API_KEY || '',
 
   // Gas
   maxGasPriceGwei: parseFloat(process.env.MAX_GAS_PRICE_GWEI || '1'),
@@ -31,8 +35,12 @@ const config = {
 function validateConfig() {
   const errors = [];
 
-  if (!config.contractAddress || config.contractAddress === '0xYOUR_CONTRACT_ADDRESS_HERE') {
-    errors.push('CONTRACT_ADDRESS belum diset! Default: 0x87ed2acc2e780fba347d67b4840f3619987bb8a5 (The Bamboo Order)');
+  if (!config.contractAddress) {
+    errors.push('CONTRACT_ADDRESS belum diset!');
+  }
+
+  if (!config.collectionSlug) {
+    errors.push('COLLECTION_SLUG belum diset! (slug koleksi di OpenSea, contoh: "the-bamboo-order")');
   }
 
   if (!process.env.PRIVATE_KEY && !process.env.PRIVATE_KEYS) {
@@ -40,7 +48,7 @@ function validateConfig() {
   }
 
   if (!config.rpcUrl || config.rpcUrl.includes('YOUR_API_KEY')) {
-    errors.push('RPC_URL belum dikonfigurasi! Default: https://mainnet.base.org');
+    errors.push('RPC_URL belum dikonfigurasi!');
   }
 
   if (errors.length > 0) {
