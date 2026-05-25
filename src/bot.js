@@ -2,14 +2,14 @@
 
 const { ethers } = require('ethers');
 const { config, validateConfig } = require('./config');
-const { MINT_ABI } = require('./abi');
+const { NFT_CONTRACT_ABI, SEADROP_ABI, SEADROP_ADDRESSES, OPENSEA_FEE_RECIPIENT } = require('./abi');
 const Logger = require('./utils/logger');
 const WalletManager = require('./utils/wallet');
 const GasEstimator = require('./utils/gas');
 const Notifier = require('./utils/notifier');
 
 // ============================================
-// MAIN BOT CLASS
+// MAIN BOT CLASS - SeaDrop Mint
 // ============================================
 
 class MintBot {
@@ -18,7 +18,10 @@ class MintBot {
     this.walletManager = null;
     this.gasEstimator = null;
     this.notifier = null;
-    this.contract = null;
+    this.nftContract = null;
+    this.seaDropContract = null;
+    this.seaDropAddress = null;
+    this.feeRecipient = OPENSEA_FEE_RECIPIENT;
     this.isMinting = false;
     this.mintResults = [];
   }
@@ -41,19 +44,33 @@ class MintBot {
     // Setup notifier
     this.notifier = new Notifier(config.enableNotifications);
 
-    // Setup contract
-    this.contract = new ethers.Contract(
+    // Setup NFT contract (untuk monitoring)
+    this.nftContract = new ethers.Contract(
       config.contractAddress,
-      MINT_ABI,
+      NFT_CONTRACT_ABI,
       this.provider
     );
 
-    Logger.info(`Contract: ${config.contractAddress}`);
-    Logger.info(`Mint Function: ${config.mintFunction}`);
-    Logger.info(`Mint Price: ${config.mintPrice} ETH`);
+    // Setup SeaDrop contract (untuk mint!)
+    this.seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[8453];
+    this.seaDropContract = new ethers.Contract(
+      this.seaDropAddress,
+      SEADROP_ABI,
+      this.provider
+    );
+
+    // Coba ambil fee recipient dari contract
+    await this.resolveFeeRecipient();
+
+    Logger.info(`NFT Contract: ${config.contractAddress}`);
+    Logger.info(`SeaDrop Contract: ${this.seaDropAddress}`);
+    Logger.info(`Fee Recipient: ${this.feeRecipient}`);
     Logger.info(`Mint Amount: ${config.mintAmount}`);
     Logger.info(`Mode: ${config.botMode}`);
     Logger.divider();
+
+    // Tampilkan info public drop jika tersedia
+    await this.showPublicDropInfo();
   }
 
   async setupProvider() {
@@ -81,69 +98,98 @@ class MintBot {
     }
   }
 
+  async resolveFeeRecipient() {
+    try {
+      const feeRecipients = await this.seaDropContract.getAllowedFeeRecipients(config.contractAddress);
+      if (feeRecipients && feeRecipients.length > 0) {
+        this.feeRecipient = feeRecipients[0];
+        Logger.info(`Fee recipient resolved: ${this.feeRecipient}`);
+      }
+    } catch (e) {
+      Logger.warn(`Tidak bisa resolve fee recipient, menggunakan default OpenSea: ${this.feeRecipient}`);
+    }
+  }
+
+  async showPublicDropInfo() {
+    try {
+      const publicDrop = await this.seaDropContract.getPublicDrop(config.contractAddress);
+      
+      const mintPrice = ethers.formatEther(publicDrop.mintPrice);
+      const startTime = new Date(Number(publicDrop.startTime) * 1000);
+      const endTime = Number(publicDrop.endTime) === 0 ? 'No end' : new Date(Number(publicDrop.endTime) * 1000);
+      const maxPerWallet = Number(publicDrop.maxTotalMintableByWallet);
+
+      Logger.divider();
+      Logger.info('📋 PUBLIC DROP INFO:');
+      Logger.info(`   Mint Price: ${mintPrice} ETH`);
+      Logger.info(`   Start Time: ${startTime.toLocaleString()}`);
+      Logger.info(`   End Time: ${endTime}`);
+      Logger.info(`   Max Per Wallet: ${maxPerWallet}`);
+      Logger.info(`   Fee BPS: ${Number(publicDrop.feeBps)}`);
+      Logger.divider();
+
+      // Auto-set mint price jika belum diset
+      if (config.mintPrice === '0' && publicDrop.mintPrice > 0n) {
+        config.mintPrice = mintPrice;
+        Logger.info(`💰 Auto-detected mint price: ${mintPrice} ETH`);
+      }
+
+      // Cek apakah mint sudah aktif berdasarkan waktu
+      const now = Math.floor(Date.now() / 1000);
+      if (Number(publicDrop.startTime) > now) {
+        const diff = Number(publicDrop.startTime) - now;
+        Logger.warn(`⏰ Mint belum dibuka! Mulai dalam ${Math.floor(diff / 60)} menit ${diff % 60} detik`);
+      } else if (Number(publicDrop.endTime) > 0 && Number(publicDrop.endTime) < now) {
+        Logger.error(`❌ Mint sudah berakhir!`);
+      } else {
+        Logger.success(`🟢 Mint AKTIF berdasarkan waktu!`);
+      }
+
+    } catch (e) {
+      Logger.warn(`Tidak bisa membaca public drop info: ${e.message}`);
+    }
+  }
+
   // ============================================
   // MINT STATUS MONITORING
   // ============================================
 
   async checkMintStatus() {
-    const checks = [
-      { fn: 'mintActive', name: 'mintActive' },
-      { fn: 'isPublicMintActive', name: 'isPublicMintActive' },
-      { fn: 'publicSaleActive', name: 'publicSaleActive' },
-      { fn: 'saleIsActive', name: 'saleIsActive' },
-    ];
-
-    for (const check of checks) {
-      try {
-        const result = await this.contract[check.fn]();
-        if (result === true) {
-          Logger.success(`Mint AKTIF! (via ${check.name})`);
-          return true;
-        }
-        return false;
-      } catch (e) {
-        // Function tidak ada di contract, skip
-        continue;
-      }
-    }
-
-    // Cek paused (inverted logic)
     try {
-      const paused = await this.contract.paused();
-      if (paused === false) {
-        Logger.success('Contract NOT paused - mint mungkin aktif');
-        return true;
-      }
-      return false;
-    } catch (e) {
-      // Skip
-    }
+      const publicDrop = await this.seaDropContract.getPublicDrop(config.contractAddress);
+      const now = Math.floor(Date.now() / 1000);
+      const startTime = Number(publicDrop.startTime);
+      const endTime = Number(publicDrop.endTime);
 
-    // Jika tidak bisa detect, coba langsung estimasi gas (jika berhasil = mint aktif)
-    try {
-      const wallet = this.walletManager.getPrimaryWallet();
-      const connectedContract = this.contract.connect(wallet);
-      const mintValue = ethers.parseEther(config.mintPrice);
-      
-      await connectedContract[config.mintFunction].estimateGas(
-        config.mintAmount,
-        { value: mintValue }
-      );
-      Logger.success('Mint AKTIF! (gas estimate berhasil)');
+      // Cek apakah dalam window waktu mint
+      if (startTime === 0) {
+        return false; // Belum di-configure
+      }
+
+      if (startTime > now) {
+        return false; // Belum mulai
+      }
+
+      if (endTime > 0 && endTime < now) {
+        return false; // Sudah berakhir
+      }
+
+      // Mint aktif!
       return true;
     } catch (e) {
-      if (e.message && (e.message.includes('not active') || e.message.includes('not started') || e.message.includes('paused'))) {
-        return false;
-      }
-      // Error lain mungkin berarti fungsi membutuhkan parameter berbeda
-      // Coba tanpa parameter
+      // Fallback: coba estimasi gas
       try {
         const wallet = this.walletManager.getPrimaryWallet();
-        const connectedContract = this.contract.connect(wallet);
-        const mintValue = ethers.parseEther(config.mintPrice);
-        
-        await connectedContract[config.mintFunction].estimateGas({ value: mintValue });
-        Logger.success('Mint AKTIF! (gas estimate berhasil, no params)');
+        const connectedSeaDrop = this.seaDropContract.connect(wallet);
+        const mintValue = ethers.parseEther(config.mintPrice || '0');
+
+        await connectedSeaDrop.mintPublic.estimateGas(
+          config.contractAddress,
+          this.feeRecipient,
+          ethers.ZeroAddress, // minterIfNotPayer = zero address (minting for self)
+          config.mintAmount,
+          { value: mintValue * BigInt(config.mintAmount) }
+        );
         return true;
       } catch (e2) {
         return false;
@@ -156,10 +202,8 @@ class MintBot {
       let totalSupply = '?';
       let maxSupply = '?';
 
-      try { totalSupply = (await this.contract.totalSupply()).toString(); } catch (e) {}
-      try { maxSupply = (await this.contract.maxSupply()).toString(); } catch (e) {
-        try { maxSupply = (await this.contract.MAX_SUPPLY()).toString(); } catch (e2) {}
-      }
+      try { totalSupply = (await this.nftContract.totalSupply()).toString(); } catch (e) {}
+      try { maxSupply = (await this.nftContract.maxSupply()).toString(); } catch (e) {}
 
       return { totalSupply, maxSupply };
     } catch (e) {
@@ -168,62 +212,53 @@ class MintBot {
   }
 
   // ============================================
-  // MINT EXECUTION
+  // SEADROP MINT EXECUTION
   // ============================================
 
   async executeMint(wallet) {
     const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
-    Logger.mint(`Memulai mint untuk wallet ${shortAddr}...`);
+    Logger.mint(`Memulai SeaDrop mint untuk wallet ${shortAddr}...`);
 
-    const connectedContract = this.contract.connect(wallet);
-    const mintValue = ethers.parseEther(config.mintPrice) * BigInt(config.mintAmount);
+    const connectedSeaDrop = this.seaDropContract.connect(wallet);
+    
+    // Hitung total value (mint price * quantity)
+    const mintPricePerUnit = ethers.parseEther(config.mintPrice || '0');
+    const totalValue = mintPricePerUnit * BigInt(config.mintAmount);
 
     // Get gas settings
     const gasSettings = await this.gasEstimator.getOptimalGasSettings();
 
-    // Determine mint arguments
-    let tx;
     const txOverrides = {
-      value: mintValue,
+      value: totalValue,
       ...gasSettings,
     };
 
     // Estimate gas limit
     try {
-      const gasLimit = await this.gasEstimator.estimateGasLimit(
-        connectedContract,
-        config.mintFunction,
-        [config.mintAmount],
-        mintValue
+      const estimated = await connectedSeaDrop.mintPublic.estimateGas(
+        config.contractAddress,
+        this.feeRecipient,
+        ethers.ZeroAddress, // minterIfNotPayer (zero = minting for self)
+        config.mintAmount,
+        { value: totalValue }
       );
-      txOverrides.gasLimit = gasLimit;
+      txOverrides.gasLimit = (estimated * BigInt(Math.floor(config.gasMultiplier * 100))) / 100n;
+      Logger.gas(`Estimated gas: ${estimated.toString()} (with buffer: ${txOverrides.gasLimit.toString()})`);
     } catch (e) {
-      // Coba tanpa parameter
-      try {
-        const gasLimit = await this.gasEstimator.estimateGasLimit(
-          connectedContract,
-          config.mintFunction,
-          [],
-          mintValue
-        );
-        txOverrides.gasLimit = gasLimit;
-      } catch (e2) {
-        txOverrides.gasLimit = 300000n;
-      }
+      Logger.warn(`Gas estimate gagal, menggunakan 300000: ${e.message}`);
+      txOverrides.gasLimit = 300000n;
     }
 
-    // Execute mint transaction
-    try {
-      // Coba dengan quantity parameter dulu
-      tx = await connectedContract[config.mintFunction](config.mintAmount, txOverrides);
-    } catch (e) {
-      // Jika gagal, coba tanpa parameter
-      try {
-        tx = await connectedContract[config.mintFunction](txOverrides);
-      } catch (e2) {
-        throw new Error(`Mint gagal: ${e2.reason || e2.message}`);
-      }
-    }
+    // Execute SeaDrop mintPublic!
+    Logger.mint(`Calling SeaDrop.mintPublic(${config.contractAddress}, ${this.feeRecipient}, 0x0, ${config.mintAmount}) | value: ${ethers.formatEther(totalValue)} ETH`);
+
+    const tx = await connectedSeaDrop.mintPublic(
+      config.contractAddress,        // nftContract
+      this.feeRecipient,             // feeRecipient
+      ethers.ZeroAddress,            // minterIfNotPayer (zero = self)
+      config.mintAmount,             // quantity
+      txOverrides
+    );
 
     Logger.mint(`TX dikirim! Hash: ${tx.hash}`);
     Logger.info(`Menunggu konfirmasi...`);
@@ -268,7 +303,7 @@ class MintBot {
     this.isMinting = true;
 
     const wallets = this.walletManager.getWallets();
-    Logger.mint(`🚀 EKSEKUSI MINT UNTUK ${wallets.length} WALLET(S)!`);
+    Logger.mint(`🚀 EKSEKUSI SEADROP MINT UNTUK ${wallets.length} WALLET(S)!`);
     this.notifier.mintOpen();
 
     // Mint semua wallet secara paralel untuk kecepatan FCFS
@@ -301,7 +336,7 @@ class MintBot {
   // ============================================
 
   async runMonitorMode() {
-    Logger.info('🔍 Mode MONITOR - Menunggu mint dibuka...');
+    Logger.info('🔍 Mode MONITOR - Menunggu mint dibuka (via SeaDrop)...');
     Logger.info(`Polling setiap ${config.pollInterval}ms`);
     Logger.divider();
 
@@ -333,7 +368,7 @@ class MintBot {
   }
 
   async runInstantMode() {
-    Logger.info('⚡ Mode INSTANT - Langsung mint!');
+    Logger.info('⚡ Mode INSTANT - Langsung mint via SeaDrop!');
     Logger.divider();
     await this.mintAllWallets();
   }

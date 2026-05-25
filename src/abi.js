@@ -1,52 +1,67 @@
 /**
- * ABI untuk mint functions yang umum digunakan.
+ * ABI untuk OpenSea SeaDrop mint mechanism.
  * 
- * PENTING: Sesuaikan ABI ini dengan contract The Bamboo Order yang sebenarnya.
- * Cara mendapatkan ABI yang benar:
- * 1. Buka contract di Etherscan
- * 2. Tab "Contract" -> "Read Contract" / "Write Contract"
- * 3. Cari function mint yang tersedia
+ * Contract: 0x87ed2acc2e780fba347d67b4840f3619987bb8a5 (The Bamboo Order - Base)
  * 
- * Beberapa variasi mint function yang umum:
+ * PENTING: SeaDrop mint TIDAK dipanggil langsung ke NFT contract!
+ * User memanggil fungsi mintPublic() di SEADROP CONTRACT,
+ * lalu SeaDrop contract memanggil mintSeaDrop() di NFT contract.
+ * 
+ * Flow: User -> SeaDrop.mintPublic() -> NFTContract.mintSeaDrop()
  */
 
-const MINT_ABI = [
-  // Standard mint(uint256 quantity)
-  "function mint(uint256 quantity) external payable",
+// ABI untuk NFT Contract (ERC721SeaDrop) - untuk monitoring/read
+const NFT_CONTRACT_ABI = [
+  // mintSeaDrop - hanya bisa dipanggil oleh SeaDrop contract
+  "function mintSeaDrop(address minter, uint256 quantity) external",
   
-  // Public mint dengan quantity
-  "function publicMint(uint256 quantity) external payable",
-  
-  // Mint tanpa parameter (1 per tx)
-  "function mint() external payable",
-
-  // Claim style
-  "function claim(uint256 quantity) external payable",
-
-  // Mint dengan proof (whitelist) - jika diperlukan
-  "function mint(uint256 quantity, bytes32[] calldata proof) external payable",
-
-  // Read functions untuk monitoring
+  // Read functions
   "function totalSupply() external view returns (uint256)",
   "function maxSupply() external view returns (uint256)",
-  "function MAX_SUPPLY() external view returns (uint256)",
-  
-  // Mint status checks
-  "function mintActive() external view returns (bool)",
-  "function isPublicMintActive() external view returns (bool)",
-  "function publicSaleActive() external view returns (bool)",
-  "function saleIsActive() external view returns (bool)",
-  "function paused() external view returns (bool)",
-  
-  // Price
-  "function price() external view returns (uint256)",
-  "function mintPrice() external view returns (uint256)",
-  "function cost() external view returns (uint256)",
-  
-  // Per wallet limit
-  "function maxMintPerWallet() external view returns (uint256)",
-  "function numberMinted(address owner) external view returns (uint256)",
+  "function name() external view returns (string)",
+  "function symbol() external view returns (string)",
   "function balanceOf(address owner) external view returns (uint256)",
+  "function baseURI() external view returns (string)",
+  
+  // SeaDrop specific reads
+  "function getMintStats(address minter) external view returns (uint256 minterNumMinted, uint256 currentTotalSupply, uint256 maxSupply)",
+  "function getPublicDrop(address seaDropImpl) external view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))",
+  "function getAllowedSeaDrop() external view returns (address[])",
 ];
 
-module.exports = { MINT_ABI };
+// ABI untuk SeaDrop Contract - INI YANG DIPANGGIL USER UNTUK MINT!
+const SEADROP_ABI = [
+  // Public mint - fungsi utama yang dipanggil user
+  "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) external payable",
+  
+  // Get public drop info
+  "function getPublicDrop(address nftContract) external view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))",
+  
+  // Get fee recipients
+  "function getAllowedFeeRecipients(address nftContract) external view returns (address[])",
+  
+  // Get mint stats
+  "function getMintStats(address nftContract, address minter) external view returns (uint256 minterNumMinted, uint256 currentTotalSupply, uint256 maxSupply)",
+];
+
+// SeaDrop contract addresses (OpenSea official)
+const SEADROP_ADDRESSES = {
+  // Base Mainnet
+  8453: '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+  // Ethereum Mainnet
+  1: '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+  // Sepolia Testnet
+  11155111: '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+};
+
+// OpenSea fee recipient (official)
+const OPENSEA_FEE_RECIPIENT = '0x0000a26b00c1F0DF003000390027140000fAa719';
+
+module.exports = { 
+  NFT_CONTRACT_ABI, 
+  SEADROP_ABI, 
+  SEADROP_ADDRESSES, 
+  OPENSEA_FEE_RECIPIENT,
+  // Keep backward compat
+  MINT_ABI: NFT_CONTRACT_ABI 
+};
