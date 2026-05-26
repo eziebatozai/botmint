@@ -1,7 +1,7 @@
 /**
- * ABI untuk OpenSea SeaDrop FCFS (SIGNED_PRESALE) mint mechanism.
+ * ABI untuk OpenSea SeaDrop mint mechanism - Lacertians (Ethereum Mainnet).
  * 
- * PENTING: Untuk FCFS/Presale, user memanggil mintSigned() di SEADROP CONTRACT.
+ * Supports both SIGNED_PRESALE (WL) and PUBLIC mint via SeaDrop contract.
  * Signature diperoleh dari OpenSea API sebelum mint.
  * 
  * Flow: User -> OpenSea API (get signature) -> SeaDrop.mintSigned() -> NFTContract.mintSeaDrop()

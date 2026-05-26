@@ -1,18 +1,29 @@
-# 🎯 BotMint FCFS - SeaDrop Signed Presale
+# 🦎 BotMint - Lacertians Public Mint Bot (Ethereum)
 
-Bot otomatis untuk mint NFT fase **FCFS (First Come First Served)** menggunakan mekanisme **SIGNED_PRESALE** di OpenSea SeaDrop.
+Bot otomatis untuk **PUBLIC MINT** NFT **Lacertians** via **SeaDrop.mintPublic()** di **Ethereum Mainnet**.
+
+## 📋 Koleksi Info
+
+| Info | Detail |
+|------|--------|
+| Collection | [Lacertians](https://opensea.io/collection/lacertians) |
+| Chain | Ethereum Mainnet (chainId: 1) |
+| Contract | `0x35f39c6bc77ae5fec20c29b5212a77509fdbaf03` |
+| Mint Price | 0.006 ETH |
+| Max Supply | 3,000 |
 
 ## ⚡ Cara Kerja
 
 ```
-User → OpenSea API (fetch signature) → SeaDrop.mintSigned() → NFT Contract
+User → SeaDrop.mintPublic(nftContract, feeRecipient, 0x0, qty) → NFT minted!
 ```
 
+**Public mint** = siapa saja bisa mint tanpa perlu WL atau signature.
+
 Bot ini:
-1. **Monitor** stage FCFS di OpenSea sampai aktif
-2. **Fetch signature** dari OpenSea GraphQL API
-3. **Execute `mintSigned()`** di SeaDrop contract
-4. Support **multi-wallet** untuk mint paralel (kecepatan FCFS!)
+1. **Monitor** status public drop on-chain (startTime/endTime)
+2. Saat public mint aktif → langsung panggil `SeaDrop.mintPublic()`
+3. Support **multi-wallet** untuk mint paralel
 
 ## 🚀 Quick Start
 
@@ -24,87 +35,73 @@ npm install
 ### 2. Setup environment
 ```bash
 cp .env.example .env
-# Edit .env dengan konfigurasi kamu
+# Edit .env → ISI PRIVATE_KEY kamu!
 ```
 
 ### 3. Jalankan bot
 
-**Mode Monitor** (recommended untuk FCFS):
+**Mode Monitor** (recommended - auto detect saat mint buka):
 ```bash
 npm start
 ```
-Bot akan polling OpenSea sampai stage FCFS aktif, lalu auto-mint.
 
-**Mode Instant** (langsung mint):
+**Mode Instant** (langsung mint, pastikan public mint sudah aktif):
 ```bash
-npm run instant
+# Edit .env → BOT_MODE=instant
+npm start
 ```
 
-**Test koneksi dulu:**
+**Monitor saja (tanpa auto-mint):**
 ```bash
-npm run test
+npm run monitor
 ```
 
-## 📋 Konfigurasi Penting
-
-| Variable | Deskripsi |
-|----------|-----------|
-| `CONTRACT_ADDRESS` | Alamat NFT contract |
-| `COLLECTION_SLUG` | Slug koleksi di OpenSea (dari URL) |
-| `STAGE_INDEX` | Index stage FCFS (dari data drop, biasanya 1 atau 2) |
-| `MINT_PRICE` | Harga mint per NFT (dalam ETH, "0" untuk free mint) |
-| `MINT_AMOUNT` | Jumlah NFT yang mau di-mint |
-| `PRIVATE_KEY` | Private key wallet (JANGAN SHARE!) |
-| `BOT_MODE` | `monitor` atau `instant` |
-
-## 🔍 Cara Cari Stage Index
-
-Dari data GraphQL OpenSea, kamu bisa lihat stages:
-```json
-{
-  "stages": [
-    { "stageType": "SIGNED_PRESALE", "stageIndex": 1, "isEligible": false },
-    { "stageType": "SIGNED_PRESALE", "stageIndex": 2, "isEligible": true },  ← Target ini!
-    { "stageType": "PUBLIC_SALE", "stageIndex": 0 }
-  ]
-}
+**Test koneksi:**
+```bash
+npm run test-connection
 ```
 
-Set `STAGE_INDEX=2` untuk target stage FCFS yang eligible.
+## 📋 Konfigurasi
+
+| Variable | Deskripsi | Default |
+|----------|-----------|---------|
+| `CONTRACT_ADDRESS` | Lacertians contract | `0x35f39c...` |
+| `MINT_PRICE` | Harga mint (ETH) | `0.006` |
+| `MINT_AMOUNT` | Jumlah per mint | `1` |
+| `PRIVATE_KEY` | Private key wallet | - |
+| `BOT_MODE` | `monitor` atau `instant` | `monitor` |
+| `MAX_GAS_PRICE_GWEI` | Max gas | `50` |
+| `PRIORITY_FEE_GWEI` | Priority fee | `2` |
 
 ## 🔐 Keamanan
 
 - Private key **HANYA** disimpan lokal di `.env`
 - `.env` sudah ada di `.gitignore`
-- Signature dari OpenSea per-wallet & per-session (tidak bisa di-reuse)
 - Bot tidak menyimpan data sensitif
+- Public mint = on-chain, tidak perlu API signature
 
-## 📦 Dependencies
+## 💰 Biaya
 
-- `ethers` - Blockchain interaction
-- `dotenv` - Environment variables
-- `chalk` - Colored terminal output
-- `node-notifier` - Desktop notifications
-
-## ⚠️ Catatan
-
-- Bot ini untuk **SIGNED_PRESALE** (FCFS) stage, bukan PUBLIC_SALE
-- Pastikan wallet eligible untuk target stage
-- Base chain gas sangat murah (<$0.01/tx)
-- Untuk multi-wallet, set `PRIVATE_KEYS` (comma-separated)
-- OpenSea API rate limit berlaku — gunakan `OPENSEA_API_KEY` jika punya
+- Mint price: **0.006 ETH** per NFT
+- Gas fee: ~0.005-0.02 ETH (tergantung network)
+- **Total minimal: ~0.03 ETH per wallet**
 
 ## 🛠️ Troubleshooting
 
-**"Not eligible for stage X"**
-- Wallet belum terdaftar di allowlist FCFS
-- Cek di OpenSea drop page apakah wallet eligible
-
-**"Signature not available"**
-- Stage belum dibuka (gunakan mode monitor)
-- Rate limited oleh OpenSea (tunggu sebentar)
+**"Public mint belum dikonfigurasi"**
+- Contract belum set startTime untuk public drop
+- Gunakan mode `monitor` untuk tunggu sampai aktif
 
 **"Transaction reverted"**
-- Mint sudah habis (sold out)
+- Mint sudah sold out
 - Sudah mint max per wallet
-- Stage sudah berakhir
+- Public mint belum/sudah berakhir
+- Gas terlalu rendah → naikkan `MAX_GAS_PRICE_GWEI`
+
+**"Insufficient funds"**
+- Butuh min 0.006 ETH (mint) + ~0.01 ETH (gas)
+- Top up wallet sebelum mint
+
+**"Gas estimate gagal"**
+- Contract mungkin belum siap / sold out
+- Bot akan pakai fallback gasLimit 200000

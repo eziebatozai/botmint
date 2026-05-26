@@ -1,7 +1,7 @@
 {
-  "name": "botmint-fcfs",
-  "version": "1.0.0",
-  "description": "Auto Mint FCFS Bot for The Bamboo Order NFT Collection",
+  "name": "botmint-lacertians",
+  "version": "2.0.0",
+  "description": "Auto Mint Bot for Lacertians NFT Collection (OpenSea Drop - Ethereum)",
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",

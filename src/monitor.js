@@ -1,149 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * Monitor-only mode - Cek status FCFS (SIGNED_PRESALE) stage di OpenSea
- * Berguna untuk memantau kapan stage FCFS dibuka sebelum menjalankan bot utama
+ * Monitor-only mode - Cek status PUBLIC MINT di SeaDrop contract (on-chain)
+ * Berguna untuk memantau kapan public mint dibuka sebelum menjalankan bot utama
  */
 
 const { ethers } = require('ethers');
 const { config } = require('./config');
-const { NFT_CONTRACT_ABI, SEADROP_ABI, SEADROP_ADDRESSES } = require('./abi');
+const { NFT_CONTRACT_ABI, SEADROP_ABI, SEADROP_ADDRESSES, OPENSEA_FEE_RECIPIENT } = require('./abi');
 const Logger = require('./utils/logger');
-
-// ============================================
-// OPENSEA DROP INFO FETCHER (for monitor)
-// ============================================
-
-async function fetchDropInfo(walletAddress) {
-  const apiUrl = 'https://opensea.io/__api/graphql';
-
-  const query = `
-    query DropBySlugQuery($slug: String!, $address: AddressScalar) {
-      dropBySlug(slug: $slug, address: $address) {
-        __typename
-        ... on Erc721SeaDropV1 {
-          minterQuantityMinted
-          stages {
-            stageType
-            stageIndex
-            isEligible
-            maxTotalMintableByWallet
-            eligibleMaxTotalMintableByWallet
-            eligiblePrice {
-              usd
-              token {
-                unit
-                symbol
-                contractAddress
-                chain {
-                  identifier
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const variables = {
-    slug: config.collectionSlug,
-    address: walletAddress || undefined,
-  };
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Origin': 'https://opensea.io',
-    'Referer': 'https://opensea.io/',
-  };
-
-  if (config.opensea_api_key) {
-    headers['X-API-KEY'] = config.opensea_api_key;
-  }
-
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenSea API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data?.data?.dropBySlug;
-}
-
-/**
- * Coba fetch signature untuk cek apakah mint sudah bisa dieksekusi
- */
-async function testSignatureAvailability(walletAddress) {
-  const apiUrl = 'https://opensea.io/__api/graphql';
-
-  const query = `
-    mutation GenerateSignedMintFulfillmentDataMutation($input: GenerateSignedMintFulfillmentDataInput!) {
-      drops {
-        generateSignedMintFulfillmentData(input: $input) {
-          ... on GenerateSignedMintFulfillmentDataSuccess {
-            fulfillmentData {
-              salt
-            }
-          }
-          ... on GenerateSignedMintFulfillmentDataError {
-            message
-            code
-          }
-        }
-      }
-    }
-  `;
-
-  const variables = {
-    input: {
-      collectionSlug: config.collectionSlug,
-      minterAddress: walletAddress,
-      quantity: config.mintAmount,
-      stageIndex: config.stageIndex,
-    },
-  };
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Origin': 'https://opensea.io',
-    'Referer': 'https://opensea.io/',
-    'X-Signed-Query': 'true',
-  };
-
-  if (config.opensea_api_key) {
-    headers['X-API-KEY'] = config.opensea_api_key;
-  }
-
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!response.ok) {
-    return { available: false, reason: `HTTP ${response.status}` };
-  }
-
-  const data = await response.json();
-  const result = data?.data?.drops?.generateSignedMintFulfillmentData;
-
-  if (result?.fulfillmentData?.salt) {
-    return { available: true };
-  }
-
-  if (result?.message) {
-    return { available: false, reason: result.message };
-  }
-
-  return { available: false, reason: 'Unknown' };
-}
 
 // ============================================
 // MONITOR MAIN
@@ -151,17 +16,19 @@ async function testSignatureAvailability(walletAddress) {
 
 async function monitor() {
   Logger.banner();
-  Logger.info('🔍 MODE: FCFS Monitor (SIGNED_PRESALE)');
-  Logger.info('📋 Protocol: OpenSea SeaDrop - mintSigned');
+  Logger.info('🔍 MODE: Lacertians PUBLIC MINT Monitor');
+  Logger.info('📋 Protocol: SeaDrop.mintPublic() - Ethereum Mainnet');
   Logger.divider();
 
   const provider = new ethers.JsonRpcProvider(config.rpcUrl, config.chainId);
   const nftContract = new ethers.Contract(config.contractAddress, NFT_CONTRACT_ABI, provider);
   
-  const seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[8453];
+  const seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[1];
+  const seaDropContract = new ethers.Contract(seaDropAddress, SEADROP_ABI, provider);
 
-  // Get wallet address for eligibility check
+  // Get wallet address for balance check
   let walletAddress = null;
+  let walletBalance = '?';
   if (process.env.PRIVATE_KEY) {
     try {
       const wallet = new ethers.Wallet(process.env.PRIVATE_KEY);
@@ -172,7 +39,7 @@ async function monitor() {
   Logger.info(`NFT Contract: ${config.contractAddress}`);
   Logger.info(`SeaDrop: ${seaDropAddress}`);
   Logger.info(`Collection: ${config.collectionSlug}`);
-  Logger.info(`Target Stage: ${config.stageIndex} (SIGNED_PRESALE / FCFS)`);
+  Logger.info(`Mint Price: ${config.mintPrice} ETH`);
   if (walletAddress) Logger.info(`Wallet: ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`);
   Logger.info(`RPC: ${config.rpcUrl.slice(0, 40)}...`);
   Logger.divider();
@@ -193,93 +60,92 @@ async function monitor() {
       const feeData = await provider.getFeeData();
       const gasPrice = ethers.formatUnits(feeData.gasPrice || 0n, 'gwei');
 
-      // Fetch FCFS stage info from OpenSea
-      let stageInfo = null;
-      let allStages = [];
+      // Wallet balance
+      if (walletAddress) {
+        try {
+          const bal = await provider.getBalance(walletAddress);
+          walletBalance = ethers.formatEther(bal).slice(0, 8);
+        } catch (e) {}
+      }
+
+      // Fetch PUBLIC DROP info from SeaDrop contract (on-chain)
       let mintStatus = 'UNKNOWN';
-      let mintPrice = '?';
+      let onchainPrice = '?';
       let maxPerWallet = '?';
-      let isEligible = false;
-      let alreadyMinted = null;
-      let sigAvailable = false;
-      let sigReason = '';
+      let startTime = 0;
+      let endTime = 0;
+      let isActive = false;
 
       try {
-        const dropInfo = await fetchDropInfo(walletAddress);
+        const publicDrop = await seaDropContract.getPublicDrop(config.contractAddress);
         
-        if (dropInfo && dropInfo.stages) {
-          allStages = dropInfo.stages;
-          stageInfo = dropInfo.stages.find(s => s.stageIndex === config.stageIndex);
-          alreadyMinted = dropInfo.minterQuantityMinted;
-        }
+        onchainPrice = ethers.formatEther(publicDrop.mintPrice || 0n);
+        maxPerWallet = Number(publicDrop.maxTotalMintableByWallet).toString();
+        startTime = Number(publicDrop.startTime);
+        endTime = Number(publicDrop.endTime);
+        
+        const now = Math.floor(Date.now() / 1000);
 
-        if (stageInfo) {
-          mintPrice = `${stageInfo.eligiblePrice?.token?.unit || 0} ETH`;
-          maxPerWallet = stageInfo.maxTotalMintableByWallet?.toString() || '?';
-          isEligible = stageInfo.isEligible;
-
-          if (isEligible) {
-            // Cek apakah signature available (= mint aktif)
-            if (walletAddress) {
-              const sigCheck = await testSignatureAvailability(walletAddress);
-              sigAvailable = sigCheck.available;
-              sigReason = sigCheck.reason || '';
-            }
-
-            if (sigAvailable) {
-              mintStatus = '🟢 FCFS ACTIVE! SIGNATURE READY!';
-            } else {
-              mintStatus = `🟡 ELIGIBLE - Waiting for stage to open (${sigReason})`;
-            }
-          } else {
-            mintStatus = '🔴 NOT ELIGIBLE for this stage';
-          }
+        if (startTime === 0) {
+          mintStatus = '⚪ Public mint belum dikonfigurasi';
+        } else if (now < startTime) {
+          const diff = startTime - now;
+          const hours = Math.floor(diff / 3600);
+          const mins = Math.floor((diff % 3600) / 60);
+          const secs = diff % 60;
+          mintStatus = `⏳ Mulai dalam ${hours}h ${mins}m ${secs}s`;
+        } else if (endTime > 0 && now >= endTime) {
+          mintStatus = '🔴 PUBLIC MINT SUDAH BERAKHIR';
         } else {
-          mintStatus = `⚪ Stage ${config.stageIndex} not found in drop`;
+          mintStatus = '🟢 PUBLIC MINT AKTIF! SIAP MINT!';
+          isActive = true;
         }
       } catch (e) {
-        mintStatus = `❓ OpenSea Error: ${e.message.slice(0, 60)}`;
+        mintStatus = `❓ Error: ${e.message.slice(0, 50)}`;
+      }
+
+      // Mint stats per wallet
+      let walletMinted = '?';
+      if (walletAddress) {
+        try {
+          const stats = await seaDropContract.getMintStats(config.contractAddress, walletAddress);
+          walletMinted = stats.minterNumMinted.toString();
+        } catch (e) {}
       }
 
       // Display
       console.clear();
       Logger.banner();
-      Logger.info(`📊 FCFS MONITOR (SIGNED_PRESALE) - Iteration #${iteration}`);
+      Logger.info(`📊 PUBLIC MINT MONITOR - Iteration #${iteration}`);
       Logger.divider();
       Logger.info(`NFT Contract: ${config.contractAddress}`);
       Logger.info(`SeaDrop:      ${seaDropAddress}`);
       Logger.info(`Collection:   ${config.collectionSlug}`);
       Logger.info(`Block:        ${blockNumber}`);
-      Logger.info(`Gas Price:    ${parseFloat(gasPrice).toFixed(4)} Gwei`);
+      Logger.info(`Gas Price:    ${parseFloat(gasPrice).toFixed(2)} Gwei`);
       Logger.divider();
       Logger.info(`Supply:       ${totalSupply} / ${maxSupply}`);
-      Logger.info(`Target Stage: ${config.stageIndex} (SIGNED_PRESALE)`);
-      Logger.info(`Mint Price:   ${mintPrice}`);
+      Logger.info(`Mint Price:   ${onchainPrice} ETH (on-chain)`);
       Logger.info(`Max/Wallet:   ${maxPerWallet}`);
-      Logger.info(`Eligible:     ${isEligible ? '✅ YES' : '❌ NO'}`);
-      if (alreadyMinted !== null && alreadyMinted !== undefined) {
-        Logger.info(`Already Mint: ${alreadyMinted}`);
+      if (startTime > 0) {
+        Logger.info(`Start Time:   ${new Date(startTime * 1000).toLocaleString()}`);
+      }
+      if (endTime > 0) {
+        Logger.info(`End Time:     ${new Date(endTime * 1000).toLocaleString()}`);
       }
       Logger.divider();
-
-      // Show all stages
-      if (allStages.length > 0) {
-        Logger.info('📋 ALL STAGES:');
-        for (const stage of allStages) {
-          const arrow = stage.stageIndex === config.stageIndex ? ' 👉' : '   ';
-          const elig = stage.isEligible ? '✅' : '❌';
-          const price = stage.eligiblePrice?.token?.unit || 0;
-          Logger.info(`${arrow} [${stage.stageIndex}] ${stage.stageType} | ${elig} | ${price} ETH | max: ${stage.maxTotalMintableByWallet}`);
-        }
+      if (walletAddress) {
+        Logger.info(`Wallet:       ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`);
+        Logger.info(`Balance:      ${walletBalance} ETH`);
+        Logger.info(`Already Mint: ${walletMinted}`);
         Logger.divider();
       }
-
-      Logger.info(`FCFS Status:  ${mintStatus}`);
+      Logger.info(`STATUS:       ${mintStatus}`);
       Logger.divider();
       Logger.info(`Polling every ${config.pollInterval}ms... (Ctrl+C to stop)`);
 
-      if (sigAvailable) {
-        Logger.success('\n🚨 FCFS MINT IS LIVE! Jalankan: npm start');
+      if (isActive) {
+        Logger.success('\n🚨 PUBLIC MINT IS LIVE! Jalankan: npm start');
         process.stdout.write('\x07'); // Beep
       }
 

@@ -20,7 +20,7 @@ class Notifier {
 
     try {
       this.notifier.notify({
-        title: `🎋 BotMint - ${title}`,
+        title: `🦎 Lacertians - ${title}`,
         message: message,
         sound: true,
       });
