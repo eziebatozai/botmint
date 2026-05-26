@@ -11,12 +11,10 @@ const config = {
   mintAmount: parseInt(process.env.MINT_AMOUNT || '1'),
   maxPerWallet: parseInt(process.env.MAX_PER_WALLET || '5'),
 
-  // OpenSea Drop / Signed Presale (Lacertians)
+  // Collection info
   collectionSlug: process.env.COLLECTION_SLUG || 'lacertians',
-  stageIndex: parseInt(process.env.STAGE_INDEX || '1'),
-  opensea_api_key: process.env.OPENSEA_API_KEY || '',
 
-  // Gas (Ethereum Mainnet - higher than L2)
+  // Gas (Ethereum Mainnet)
   maxGasPriceGwei: parseFloat(process.env.MAX_GAS_PRICE_GWEI || '50'),
   priorityFeeGwei: parseFloat(process.env.PRIORITY_FEE_GWEI || '2'),
   gasLimit: parseInt(process.env.GAS_LIMIT || '0'),
@@ -37,10 +35,6 @@ function validateConfig() {
 
   if (!config.contractAddress) {
     errors.push('CONTRACT_ADDRESS belum diset!');
-  }
-
-  if (!config.collectionSlug) {
-    errors.push('COLLECTION_SLUG belum diset! (slug koleksi di OpenSea, contoh: "lacertians")');
   }
 
   if (!process.env.PRIVATE_KEY && !process.env.PRIVATE_KEYS) {

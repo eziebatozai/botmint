@@ -28,8 +28,8 @@ class Logger {
   static banner() {
     console.log(chalk.green(`
     ╔══════════════════════════════════════════╗
-    ║   🦎 BOTMINT - Lacertians Auto Minter 🦎 ║
-    ║      OpenSea Drop (ETHEREUM CHAIN)       ║
+    ║  🦎 BOTMINT - Lacertians Public Mint 🦎  ║
+    ║    SeaDrop.mintPublic() - ETHEREUM       ║
     ╚══════════════════════════════════════════╝
     `));
   }

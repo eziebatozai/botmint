@@ -9,189 +9,7 @@ const GasEstimator = require('./utils/gas');
 const Notifier = require('./utils/notifier');
 
 // ============================================
-// OPENSEA SIGNATURE FETCHER
-// ============================================
-
-class OpenSeaSignatureFetcher {
-  constructor(config) {
-    this.apiUrl = 'https://opensea.io/__api/graphql';
-    this.collectionSlug = config.collectionSlug;
-    this.stageIndex = config.stageIndex;
-    this.apiKey = config.opensea_api_key;
-  }
-
-  /**
-   * Fetch mint signature dari OpenSea GraphQL API
-   * OpenSea menggunakan SIGNED_PRESALE - server-side signature untuk FCFS mint
-   */
-  async fetchMintSignature(walletAddress, quantity) {
-    Logger.info(`🔑 Fetching signature untuk ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} (qty: ${quantity})...`);
-
-    const query = `
-      mutation GenerateSignedMintFulfillmentDataMutation($input: GenerateSignedMintFulfillmentDataInput!) {
-        drops {
-          generateSignedMintFulfillmentData(input: $input) {
-            ... on GenerateSignedMintFulfillmentDataSuccess {
-              fulfillmentData {
-                transaction {
-                  to
-                  value
-                  data
-                }
-                mintParameters {
-                  mintPrice
-                  maxTotalMintableByWallet
-                  startTime
-                  endTime
-                  dropStageIndex
-                  maxTokenSupplyForStage
-                  feeBps
-                  restrictFeeRecipients
-                }
-                salt
-                signature
-                feeRecipient
-              }
-            }
-            ... on GenerateSignedMintFulfillmentDataError {
-              message
-              code
-            }
-          }
-        }
-      }
-    `;
-
-    const variables = {
-      input: {
-        collectionSlug: this.collectionSlug,
-        minterAddress: walletAddress,
-        quantity: quantity,
-        stageIndex: this.stageIndex,
-      },
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'Origin': 'https://opensea.io',
-      'Referer': 'https://opensea.io/',
-      'X-Signed-Query': 'true',
-    };
-
-    if (this.apiKey) {
-      headers['X-API-KEY'] = this.apiKey;
-    }
-
-    const response = await fetch(this.apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ query, variables }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenSea API error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    if (data.errors) {
-      throw new Error(`GraphQL errors: ${JSON.stringify(data.errors)}`);
-    }
-
-    const result = data?.data?.drops?.generateSignedMintFulfillmentData;
-
-    if (!result) {
-      throw new Error('No fulfillment data returned from OpenSea');
-    }
-
-    // Check for error response type
-    if (result.message || result.code) {
-      throw new Error(`OpenSea error: ${result.message} (code: ${result.code})`);
-    }
-
-    const fulfillment = result.fulfillmentData;
-    if (!fulfillment) {
-      throw new Error('Fulfillment data is empty');
-    }
-
-    Logger.success(`✅ Signature diterima! Salt: ${fulfillment.salt}`);
-
-    return {
-      transaction: fulfillment.transaction,
-      mintParams: fulfillment.mintParameters,
-      salt: fulfillment.salt,
-      signature: fulfillment.signature,
-      feeRecipient: fulfillment.feeRecipient,
-    };
-  }
-
-  /**
-   * Fetch drop info dari OpenSea GraphQL (cek eligibility & stage status)
-   */
-  async fetchDropInfo(walletAddress) {
-    const query = `
-      query DropBySlugQuery($slug: String!, $address: AddressScalar) {
-        dropBySlug(slug: $slug, address: $address) {
-          __typename
-          ... on Erc721SeaDropV1 {
-            minterQuantityMinted
-            stages {
-              stageType
-              stageIndex
-              isEligible
-              maxTotalMintableByWallet
-              eligibleMaxTotalMintableByWallet
-              eligiblePrice {
-                usd
-                token {
-                  unit
-                  symbol
-                  contractAddress
-                  chain {
-                    identifier
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    const variables = {
-      slug: this.collectionSlug,
-      address: walletAddress,
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'Origin': 'https://opensea.io',
-      'Referer': 'https://opensea.io/',
-    };
-
-    if (this.apiKey) {
-      headers['X-API-KEY'] = this.apiKey;
-    }
-
-    const response = await fetch(this.apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ query, variables }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenSea API error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data?.data?.dropBySlug;
-  }
-}
-
-// ============================================
-// MAIN BOT CLASS - SeaDrop FCFS Mint (SIGNED_PRESALE)
+// MAIN BOT CLASS - SeaDrop PUBLIC MINT (Ethereum)
 // ============================================
 
 class MintBot {
@@ -203,7 +21,6 @@ class MintBot {
     this.nftContract = null;
     this.seaDropContract = null;
     this.seaDropAddress = null;
-    this.signatureFetcher = null;
     this.feeRecipient = OPENSEA_FEE_RECIPIENT;
     this.isMinting = false;
     this.mintResults = [];
@@ -242,23 +59,21 @@ class MintBot {
       this.provider
     );
 
-    // Setup OpenSea Signature Fetcher
-    this.signatureFetcher = new OpenSeaSignatureFetcher(config);
-
-    // Coba ambil fee recipient dari contract
+    // Resolve fee recipient dari contract
     await this.resolveFeeRecipient();
 
     Logger.info(`NFT Contract: ${config.contractAddress}`);
     Logger.info(`SeaDrop Contract: ${this.seaDropAddress}`);
     Logger.info(`Fee Recipient: ${this.feeRecipient}`);
-    Logger.info(`Collection Slug: ${config.collectionSlug}`);
-    Logger.info(`Stage Index (FCFS): ${config.stageIndex}`);
+    Logger.info(`Collection: ${config.collectionSlug}`);
+    Logger.info(`Mint Price: ${config.mintPrice} ETH`);
     Logger.info(`Mint Amount: ${config.mintAmount}`);
+    Logger.info(`Chain: Ethereum (${config.chainId})`);
     Logger.info(`Mode: ${config.botMode}`);
     Logger.divider();
 
-    // Tampilkan info stage/eligibility
-    await this.showFCFSInfo();
+    // Show public drop info
+    await this.showPublicDropInfo();
   }
 
   async setupProvider() {
@@ -298,81 +113,69 @@ class MintBot {
     }
   }
 
-  async showFCFSInfo() {
+  async showPublicDropInfo() {
     try {
-      const primaryWallet = this.walletManager.getPrimaryWallet();
-      const dropInfo = await this.signatureFetcher.fetchDropInfo(primaryWallet.address);
-
-      if (!dropInfo || !dropInfo.stages) {
-        Logger.warn('Tidak bisa fetch drop info dari OpenSea');
-        return;
-      }
+      const publicDrop = await this.seaDropContract.getPublicDrop(config.contractAddress);
+      
+      const mintPrice = ethers.formatEther(publicDrop.mintPrice || 0n);
+      const startTime = Number(publicDrop.startTime);
+      const endTime = Number(publicDrop.endTime);
+      const maxPerWallet = Number(publicDrop.maxTotalMintableByWallet);
+      const now = Math.floor(Date.now() / 1000);
 
       Logger.divider();
-      Logger.info('📋 DROP STAGES INFO:');
+      Logger.info('📋 PUBLIC DROP INFO (on-chain):');
+      Logger.info(`   Mint Price: ${mintPrice} ETH`);
+      Logger.info(`   Max/Wallet: ${maxPerWallet}`);
+      Logger.info(`   Start: ${startTime > 0 ? new Date(startTime * 1000).toLocaleString() : 'Not set'}`);
+      Logger.info(`   End: ${endTime > 0 ? new Date(endTime * 1000).toLocaleString() : 'Not set'}`);
       
-      for (const stage of dropInfo.stages) {
-        const emoji = stage.stageIndex === config.stageIndex ? '🎯' : '  ';
-        const eligibleText = stage.isEligible ? '✅ ELIGIBLE' : '❌ NOT ELIGIBLE';
-        const price = stage.eligiblePrice?.token?.unit || 0;
-        Logger.info(`${emoji} Stage ${stage.stageIndex} [${stage.stageType}] - ${eligibleText} | Price: ${price} ETH | Max/Wallet: ${stage.maxTotalMintableByWallet}`);
+      if (startTime > 0 && now >= startTime && (endTime === 0 || now < endTime)) {
+        Logger.success(`   Status: 🟢 PUBLIC MINT AKTIF!`);
+      } else if (startTime > 0 && now < startTime) {
+        const diff = startTime - now;
+        Logger.warn(`   Status: ⏳ Belum mulai (${Math.floor(diff / 60)} menit lagi)`);
+      } else if (endTime > 0 && now >= endTime) {
+        Logger.error(`   Status: 🔴 SUDAH BERAKHIR`);
+      } else {
+        Logger.warn(`   Status: ❓ Tidak bisa ditentukan`);
       }
-
-      // Cek target stage
-      const targetStage = dropInfo.stages.find(s => s.stageIndex === config.stageIndex);
-      if (targetStage) {
-        Logger.divider();
-        if (targetStage.isEligible) {
-          Logger.success(`🟢 Wallet ELIGIBLE untuk Stage ${config.stageIndex} (${targetStage.stageType})!`);
-          Logger.info(`   Max mintable: ${targetStage.eligibleMaxTotalMintableByWallet}`);
-          Logger.info(`   Price: ${targetStage.eligiblePrice?.token?.unit || 0} ETH`);
-        } else {
-          Logger.error(`❌ Wallet TIDAK ELIGIBLE untuk Stage ${config.stageIndex}!`);
-          Logger.warn(`   Bot tetap akan mencoba saat stage dibuka (FCFS).`);
-        }
-      }
-
-      if (dropInfo.minterQuantityMinted !== null) {
-        Logger.info(`   Already minted: ${dropInfo.minterQuantityMinted}`);
-      }
-
       Logger.divider();
     } catch (e) {
-      Logger.warn(`Tidak bisa fetch drop info: ${e.message}`);
+      Logger.warn(`Tidak bisa fetch public drop info: ${e.message}`);
+      Logger.info('Bot tetap akan mencoba mint...');
+      Logger.divider();
     }
   }
 
   // ============================================
-  // FCFS STATUS MONITORING
+  // PUBLIC MINT STATUS CHECK
   // ============================================
 
-  async checkFCFSStatus() {
+  async checkPublicMintStatus() {
     try {
-      const primaryWallet = this.walletManager.getPrimaryWallet();
-      const dropInfo = await this.signatureFetcher.fetchDropInfo(primaryWallet.address);
+      const publicDrop = await this.seaDropContract.getPublicDrop(config.contractAddress);
+      
+      const startTime = Number(publicDrop.startTime);
+      const endTime = Number(publicDrop.endTime);
+      const now = Math.floor(Date.now() / 1000);
 
-      if (!dropInfo || !dropInfo.stages) {
-        return { active: false, reason: 'Cannot fetch drop info' };
+      if (startTime === 0) {
+        return { active: false, reason: 'Public mint belum dikonfigurasi (startTime=0)' };
       }
 
-      const targetStage = dropInfo.stages.find(s => s.stageIndex === config.stageIndex);
-      if (!targetStage) {
-        return { active: false, reason: `Stage ${config.stageIndex} not found` };
+      if (now < startTime) {
+        const diff = startTime - now;
+        return { active: false, reason: `Belum mulai (${Math.floor(diff / 60)}m ${diff % 60}s lagi)` };
       }
 
-      if (!targetStage.isEligible) {
-        return { active: false, reason: `Not eligible for stage ${config.stageIndex}` };
+      if (endTime > 0 && now >= endTime) {
+        return { active: false, reason: 'Public mint sudah berakhir' };
       }
 
-      // Coba fetch signature - jika berhasil berarti mint aktif
-      try {
-        await this.signatureFetcher.fetchMintSignature(primaryWallet.address, config.mintAmount);
-        return { active: true };
-      } catch (sigError) {
-        return { active: false, reason: `Signature not available: ${sigError.message}` };
-      }
+      return { active: true };
     } catch (e) {
-      return { active: false, reason: e.message };
+      return { active: false, reason: `Error cek status: ${e.message}` };
     }
   }
 
@@ -391,78 +194,20 @@ class MintBot {
   }
 
   // ============================================
-  // SEADROP MINT SIGNED EXECUTION (FCFS)
+  // SEADROP PUBLIC MINT EXECUTION
   // ============================================
 
   async executeMint(wallet) {
     const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
-    Logger.mint(`🎯 Memulai FCFS mint (mintSigned) untuk wallet ${shortAddr}...`);
-
-    // Step 1: Fetch signature dari OpenSea
-    const fulfillment = await this.signatureFetcher.fetchMintSignature(wallet.address, config.mintAmount);
-
-    // Step 2: Cek apakah OpenSea mengembalikan raw transaction data
-    if (fulfillment.transaction && fulfillment.transaction.data) {
-      // OpenSea mengembalikan pre-built transaction - langsung kirim
-      Logger.info(`📦 Menggunakan pre-built transaction dari OpenSea`);
-      return await this.executeRawTransaction(wallet, fulfillment, shortAddr);
-    }
-
-    // Step 3: Kalau tidak ada pre-built tx, build sendiri dari mintParams
-    return await this.executeMintSigned(wallet, fulfillment, shortAddr);
-  }
-
-  async executeRawTransaction(wallet, fulfillment, shortAddr) {
-    const { transaction } = fulfillment;
-
-    // Get gas settings
-    const gasSettings = await this.gasEstimator.getOptimalGasSettings();
-
-    const tx = await wallet.sendTransaction({
-      to: transaction.to,
-      value: BigInt(transaction.value || '0'),
-      data: transaction.data,
-      ...gasSettings,
-    });
-
-    Logger.mint(`TX dikirim! Hash: ${tx.hash}`);
-    Logger.info(`Menunggu konfirmasi...`);
-
-    const receipt = await tx.wait(1);
-
-    if (receipt.status === 1) {
-      Logger.success(`✅ MINT BERHASIL! Gas used: ${receipt.gasUsed.toString()}`);
-      Logger.success(`TX: https://etherscan.io/tx/${tx.hash}`);
-      this.notifier.mintSuccess(tx.hash, shortAddr);
-      return { success: true, txHash: tx.hash, wallet: shortAddr };
-    } else {
-      Logger.error(`❌ TX reverted! Hash: ${tx.hash}`);
-      this.notifier.mintFailed('Transaction reverted', shortAddr);
-      return { success: false, txHash: tx.hash, wallet: shortAddr, error: 'reverted' };
-    }
-  }
-
-  async executeMintSigned(wallet, fulfillment, shortAddr) {
-    const { mintParams, salt, signature, feeRecipient } = fulfillment;
+    Logger.mint(`🎯 Memulai PUBLIC MINT untuk wallet ${shortAddr}...`);
 
     const connectedSeaDrop = this.seaDropContract.connect(wallet);
-    const resolvedFeeRecipient = feeRecipient || this.feeRecipient;
 
-    // Build MintParams tuple
-    const mintParamsTuple = [
-      BigInt(mintParams.mintPrice || 0),           // mintPrice
-      parseInt(mintParams.maxTotalMintableByWallet || 1), // maxTotalMintableByWallet
-      parseInt(mintParams.startTime || 0),         // startTime
-      parseInt(mintParams.endTime || 0),           // endTime
-      parseInt(mintParams.dropStageIndex || config.stageIndex), // dropStageIndex
-      parseInt(mintParams.maxTokenSupplyForStage || 0), // maxTokenSupplyForStage
-      parseInt(mintParams.feeBps || 0),            // feeBps
-      Boolean(mintParams.restrictFeeRecipients),   // restrictFeeRecipients
-    ];
+    // Hitung total value (mintPrice * quantity)
+    const mintPriceWei = ethers.parseEther(config.mintPrice);
+    const totalValue = mintPriceWei * BigInt(config.mintAmount);
 
-    // Hitung total value
-    const mintPricePerUnit = BigInt(mintParams.mintPrice || 0);
-    const totalValue = mintPricePerUnit * BigInt(config.mintAmount);
+    Logger.info(`   Value: ${ethers.formatEther(totalValue)} ETH (${config.mintAmount} x ${config.mintPrice} ETH)`);
 
     // Get gas settings
     const gasSettings = await this.gasEstimator.getOptimalGasSettings();
@@ -474,34 +219,30 @@ class MintBot {
 
     // Estimate gas limit
     try {
-      const estimated = await connectedSeaDrop.mintSigned.estimateGas(
+      const estimated = await connectedSeaDrop.mintPublic.estimateGas(
         config.contractAddress,
-        resolvedFeeRecipient,
-        ethers.ZeroAddress,
+        this.feeRecipient,
+        ethers.ZeroAddress, // minterIfNotPayer = payer sendiri
         config.mintAmount,
-        mintParamsTuple,
-        BigInt(salt),
-        signature,
         { value: totalValue }
       );
       txOverrides.gasLimit = (estimated * BigInt(Math.floor(config.gasMultiplier * 100))) / 100n;
       Logger.gas(`Estimated gas: ${estimated.toString()} (with buffer: ${txOverrides.gasLimit.toString()})`);
     } catch (e) {
-      Logger.warn(`Gas estimate gagal, menggunakan 300000: ${e.message}`);
-      txOverrides.gasLimit = 300000n;
+      Logger.warn(`Gas estimate gagal: ${e.message}`);
+      // Fallback gas limit untuk public mint di Ethereum
+      txOverrides.gasLimit = 200000n;
+      Logger.info(`Menggunakan fallback gasLimit: 200000`);
     }
 
-    // Execute SeaDrop mintSigned!
-    Logger.mint(`Calling SeaDrop.mintSigned(${config.contractAddress}, ${resolvedFeeRecipient}, 0x0, ${config.mintAmount}, params, salt, sig)`);
+    // Execute SeaDrop mintPublic!
+    Logger.mint(`Calling SeaDrop.mintPublic(${config.contractAddress}, ${this.feeRecipient}, 0x0, ${config.mintAmount})`);
 
-    const tx = await connectedSeaDrop.mintSigned(
+    const tx = await connectedSeaDrop.mintPublic(
       config.contractAddress,
-      resolvedFeeRecipient,
+      this.feeRecipient,
       ethers.ZeroAddress,
       config.mintAmount,
-      mintParamsTuple,
-      BigInt(salt),
-      signature,
       txOverrides
     );
 
@@ -547,10 +288,10 @@ class MintBot {
     this.isMinting = true;
 
     const wallets = this.walletManager.getWallets();
-    Logger.mint(`🚀 EKSEKUSI FCFS MINT (SIGNED_PRESALE) UNTUK ${wallets.length} WALLET(S)!`);
+    Logger.mint(`🚀 EKSEKUSI PUBLIC MINT UNTUK ${wallets.length} WALLET(S)!`);
     this.notifier.mintOpen();
 
-    // Mint semua wallet secara paralel untuk kecepatan FCFS
+    // Mint semua wallet secara paralel
     const mintPromises = wallets.map(wallet => this.executeMintWithRetry(wallet));
     this.mintResults = await Promise.allSettled(mintPromises);
 
@@ -580,8 +321,7 @@ class MintBot {
   // ============================================
 
   async runMonitorMode() {
-    Logger.info('🔍 Mode MONITOR - Menunggu FCFS stage aktif (SIGNED_PRESALE)...');
-    Logger.info(`Target Stage Index: ${config.stageIndex}`);
+    Logger.info('🔍 Mode MONITOR - Menunggu PUBLIC MINT aktif...');
     Logger.info(`Polling setiap ${config.pollInterval}ms`);
     Logger.divider();
 
@@ -591,17 +331,17 @@ class MintBot {
       pollCount++;
       
       try {
-        const status = await this.checkFCFSStatus();
+        const status = await this.checkPublicMintStatus();
         const supply = await this.getSupplyInfo();
 
         if (status.active) {
-          Logger.success(`🟢 FCFS MINT TERBUKA! Supply: ${supply.totalSupply}/${supply.maxSupply}`);
+          Logger.success(`🟢 PUBLIC MINT TERBUKA! Supply: ${supply.totalSupply}/${supply.maxSupply}`);
           await this.mintAllWallets();
           break;
         } else {
           // Update status setiap 10 poll
           if (pollCount % 10 === 0) {
-            Logger.info(`⏳ FCFS belum aktif... (poll #${pollCount}) Supply: ${supply.totalSupply}/${supply.maxSupply} | ${status.reason || ''}`);
+            Logger.info(`⏳ Public mint belum aktif... (poll #${pollCount}) Supply: ${supply.totalSupply}/${supply.maxSupply} | ${status.reason || ''}`);
           }
         }
       } catch (error) {
@@ -613,7 +353,7 @@ class MintBot {
   }
 
   async runInstantMode() {
-    Logger.info('⚡ Mode INSTANT - Langsung mint FCFS via mintSigned!');
+    Logger.info('⚡ Mode INSTANT - Langsung mint PUBLIC!');
     Logger.divider();
     await this.mintAllWallets();
   }
