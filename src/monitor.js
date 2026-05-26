@@ -151,14 +151,14 @@ async function testSignatureAvailability(walletAddress) {
 
 async function monitor() {
   Logger.banner();
-  Logger.info('🔍 MODE: FCFS Monitor (SIGNED_PRESALE)');
-  Logger.info('📋 Protocol: OpenSea SeaDrop - mintSigned');
+  Logger.info('🔍 MODE: Lacertians Mint Monitor');
+  Logger.info('📋 Protocol: OpenSea SeaDrop - mintSigned (Ethereum)');
   Logger.divider();
 
   const provider = new ethers.JsonRpcProvider(config.rpcUrl, config.chainId);
   const nftContract = new ethers.Contract(config.contractAddress, NFT_CONTRACT_ABI, provider);
   
-  const seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[8453];
+  const seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[1];
 
   // Get wallet address for eligibility check
   let walletAddress = null;
@@ -244,7 +244,7 @@ async function monitor() {
       // Display
       console.clear();
       Logger.banner();
-      Logger.info(`📊 FCFS MONITOR (SIGNED_PRESALE) - Iteration #${iteration}`);
+      Logger.info(`📊 LACERTIANS MINT MONITOR - Iteration #${iteration}`);
       Logger.divider();
       Logger.info(`NFT Contract: ${config.contractAddress}`);
       Logger.info(`SeaDrop:      ${seaDropAddress}`);

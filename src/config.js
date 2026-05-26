@@ -1,34 +1,34 @@
 require('dotenv').config();
 
 const config = {
-  // RPC
-  rpcUrl: process.env.RPC_URL || 'https://mainnet.base.org',
-  rpcBackups: process.env.RPC_URLS_BACKUP ? process.env.RPC_URLS_BACKUP.split(',').map(u => u.trim()) : ['https://base.meowrpc.com', 'https://base.drpc.org'],
+  // RPC (Ethereum Mainnet)
+  rpcUrl: process.env.RPC_URL || 'https://eth.llamarpc.com',
+  rpcBackups: process.env.RPC_URLS_BACKUP ? process.env.RPC_URLS_BACKUP.split(',').map(u => u.trim()) : ['https://rpc.ankr.com/eth', 'https://ethereum.publicnode.com'],
 
-  // Contract
-  contractAddress: process.env.CONTRACT_ADDRESS || '',
-  mintPrice: process.env.MINT_PRICE || '0',
+  // Contract (Lacertians - Ethereum)
+  contractAddress: process.env.CONTRACT_ADDRESS || '0x35f39c6bc77ae5fec20c29b5212a77509fdbaf03',
+  mintPrice: process.env.MINT_PRICE || '0.006',
   mintAmount: parseInt(process.env.MINT_AMOUNT || '1'),
-  maxPerWallet: parseInt(process.env.MAX_PER_WALLET || '1'),
+  maxPerWallet: parseInt(process.env.MAX_PER_WALLET || '5'),
 
-  // FCFS / Signed Presale
-  collectionSlug: process.env.COLLECTION_SLUG || '',
-  stageIndex: parseInt(process.env.STAGE_INDEX || '2'),
+  // OpenSea Drop / Signed Presale (Lacertians)
+  collectionSlug: process.env.COLLECTION_SLUG || 'lacertians',
+  stageIndex: parseInt(process.env.STAGE_INDEX || '1'),
   opensea_api_key: process.env.OPENSEA_API_KEY || '',
 
-  // Gas
-  maxGasPriceGwei: parseFloat(process.env.MAX_GAS_PRICE_GWEI || '1'),
-  priorityFeeGwei: parseFloat(process.env.PRIORITY_FEE_GWEI || '0.1'),
+  // Gas (Ethereum Mainnet - higher than L2)
+  maxGasPriceGwei: parseFloat(process.env.MAX_GAS_PRICE_GWEI || '50'),
+  priorityFeeGwei: parseFloat(process.env.PRIORITY_FEE_GWEI || '2'),
   gasLimit: parseInt(process.env.GAS_LIMIT || '0'),
-  gasMultiplier: parseFloat(process.env.GAS_MULTIPLIER || '1.2'),
+  gasMultiplier: parseFloat(process.env.GAS_MULTIPLIER || '1.3'),
 
   // Bot
   botMode: process.env.BOT_MODE || 'monitor',
-  pollInterval: parseInt(process.env.POLL_INTERVAL_MS || '1000'),
+  pollInterval: parseInt(process.env.POLL_INTERVAL_MS || '2000'),
   maxRetries: parseInt(process.env.MAX_RETRIES || '3'),
-  retryDelay: parseInt(process.env.RETRY_DELAY_MS || '500'),
+  retryDelay: parseInt(process.env.RETRY_DELAY_MS || '1000'),
   enableNotifications: process.env.ENABLE_NOTIFICATIONS !== 'false',
-  chainId: parseInt(process.env.CHAIN_ID || '8453'),
+  chainId: parseInt(process.env.CHAIN_ID || '1'),
 };
 
 // Validasi
@@ -40,7 +40,7 @@ function validateConfig() {
   }
 
   if (!config.collectionSlug) {
-    errors.push('COLLECTION_SLUG belum diset! (slug koleksi di OpenSea, contoh: "the-bamboo-order")');
+    errors.push('COLLECTION_SLUG belum diset! (slug koleksi di OpenSea, contoh: "lacertians")');
   }
 
   if (!process.env.PRIVATE_KEY && !process.env.PRIVATE_KEYS) {

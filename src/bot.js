@@ -235,7 +235,7 @@ class MintBot {
     );
 
     // Setup SeaDrop contract
-    this.seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[8453];
+    this.seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[1];
     this.seaDropContract = new ethers.Contract(
       this.seaDropAddress,
       SEADROP_ABI,
@@ -432,7 +432,7 @@ class MintBot {
 
     if (receipt.status === 1) {
       Logger.success(`✅ MINT BERHASIL! Gas used: ${receipt.gasUsed.toString()}`);
-      Logger.success(`TX: https://basescan.org/tx/${tx.hash}`);
+      Logger.success(`TX: https://etherscan.io/tx/${tx.hash}`);
       this.notifier.mintSuccess(tx.hash, shortAddr);
       return { success: true, txHash: tx.hash, wallet: shortAddr };
     } else {
@@ -512,7 +512,7 @@ class MintBot {
 
     if (receipt.status === 1) {
       Logger.success(`✅ MINT BERHASIL! Gas used: ${receipt.gasUsed.toString()}`);
-      Logger.success(`TX: https://basescan.org/tx/${tx.hash}`);
+      Logger.success(`TX: https://etherscan.io/tx/${tx.hash}`);
       this.notifier.mintSuccess(tx.hash, shortAddr);
       return { success: true, txHash: tx.hash, wallet: shortAddr };
     } else {

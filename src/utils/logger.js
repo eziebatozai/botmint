@@ -28,8 +28,8 @@ class Logger {
   static banner() {
     console.log(chalk.green(`
     ╔══════════════════════════════════════════╗
-    ║     🎋 BOTMINT FCFS - Auto Minter 🎋    ║
-    ║     The Bamboo Order (BASE CHAIN)        ║
+    ║   🦎 BOTMINT - Lacertians Auto Minter 🦎 ║
+    ║      OpenSea Drop (ETHEREUM CHAIN)       ║
     ╚══════════════════════════════════════════╝
     `));
   }
