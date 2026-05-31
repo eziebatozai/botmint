@@ -1,107 +1,148 @@
-# 🦎 BotMint - Lacertians Public Mint Bot (Ethereum)
+# Lobster NFT - FCFS Mint Bot
 
-Bot otomatis untuk **PUBLIC MINT** NFT **Lacertians** via **SeaDrop.mintPublic()** di **Ethereum Mainnet**.
+Bot otomatis untuk **FCFS (First Come First Serve) claim** NFT dari [lobsternft.lol/mint](https://lobsternft.lol/mint).
 
-## 📋 Koleksi Info
+## Contract Info
 
-| Info | Detail |
-|------|--------|
-| Collection | [Lacertians](https://opensea.io/collection/lacertians) |
-| Chain | Ethereum Mainnet (chainId: 1) |
-| Contract | `0x35f39c6bc77ae5fec20c29b5212a77509fdbaf03` |
-| Mint Price | 0.006 ETH |
-| Max Supply | 3,000 |
+| Field | Value |
+|-------|-------|
+| **Contract** | `0x1de237c7063a9ee531e06a6c3fba4e3e704f2a74` |
+| **Type** | Thirdweb ERC721Drop |
+| **Chain** | Ethereum Mainnet (chainId: 1) |
+| **Max Supply** | 3333 |
+| **Mint Function** | `claim(address, uint256, address, uint256, AllowlistProof, bytes)` |
 
-## ⚡ Cara Kerja
+## Features
 
-```
-User → SeaDrop.mintPublic(nftContract, feeRecipient, 0x0, qty) → NFT minted!
-```
+- **Thirdweb claim()** - Properly formatted claim call with AllowlistProof struct
+- **Auto-detect claim condition** - Reads price, start time, and limits from contract
+- **FCFS Optimized** - Aggressive gas, parallel wallet execution
+- **Multi-wallet support** - Claim dari banyak wallet sekaligus
+- **Countdown mode** - Set waktu claim, TX dikirim otomatis
+- **Monitor mode** - Polling claim condition sampai live, lalu auto-claim
 
-**Public mint** = siapa saja bisa mint tanpa perlu WL atau signature.
-
-Bot ini:
-1. **Monitor** status public drop on-chain (startTime/endTime)
-2. Saat public mint aktif → langsung panggil `SeaDrop.mintPublic()`
-3. Support **multi-wallet** untuk mint paralel
-
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Install dependencies
+
 ```bash
 npm install
 ```
 
 ### 2. Setup environment
+
 ```bash
 cp .env.example .env
-# Edit .env → ISI PRIVATE_KEY kamu!
 ```
 
-### 3. Jalankan bot
+Edit `.env` dan isi minimal:
+- `PRIVATE_KEY` - Private key wallet kamu
+- `RPC_URL` - (opsional) Premium RPC untuk speed (Alchemy/QuickNode)
+- `MINT_PRICE` - Harga mint dalam ETH (atau biarkan 0, bot akan auto-detect dari claim condition)
 
-**Mode Monitor** (recommended - auto detect saat mint buka):
-```bash
-npm start
-```
+> **Note:** `CONTRACT_ADDRESS` sudah pre-filled dengan Lobster NFT contract.
 
-**Mode Instant** (langsung mint, pastikan public mint sudah aktif):
-```bash
-# Edit .env → BOT_MODE=instant
-npm start
-```
+### 3. Test koneksi
 
-**Monitor saja (tanpa auto-mint):**
-```bash
-npm run monitor
-```
-
-**Test koneksi:**
 ```bash
 npm run test-connection
 ```
 
-## 📋 Konfigurasi
+### 4. Jalankan Bot
 
-| Variable | Deskripsi | Default |
-|----------|-----------|---------|
-| `CONTRACT_ADDRESS` | Lacertians contract | `0x35f39c...` |
-| `MINT_PRICE` | Harga mint (ETH) | `0.006` |
-| `MINT_AMOUNT` | Jumlah per mint | `1` |
-| `PRIVATE_KEY` | Private key wallet | - |
-| `BOT_MODE` | `monitor` atau `instant` | `monitor` |
-| `MAX_GAS_PRICE_GWEI` | Max gas | `50` |
-| `PRIORITY_FEE_GWEI` | Priority fee | `2` |
+**Monitor mode** (recommended - auto claim saat buka):
+```bash
+npm start
+```
 
-## 🔐 Keamanan
+**Instant mode** (langsung claim sekarang):
+```bash
+npm run instant
+```
 
-- Private key **HANYA** disimpan lokal di `.env`
-- `.env` sudah ada di `.gitignore`
-- Bot tidak menyimpan data sensitif
-- Public mint = on-chain, tidak perlu API signature
+**Countdown mode** (claim pada waktu tertentu):
+```bash
+# Edit .env: MINT_START_TIME=2025-06-15T14:00:00Z
+npm run countdown
+```
 
-## 💰 Biaya
+**Monitor only** (lihat status tanpa auto-claim):
+```bash
+npm run monitor
+```
 
-- Mint price: **0.006 ETH** per NFT
-- Gas fee: ~0.005-0.02 ETH (tergantung network)
-- **Total minimal: ~0.03 ETH per wallet**
+## How It Works
 
-## 🛠️ Troubleshooting
+1. Bot connects ke Ethereum Mainnet via RPC
+2. Reads `getActiveClaimConditionId()` dan `getClaimConditionById()` dari contract
+3. Checks `startTimestamp` - jika sudah lewat = mint live
+4. Calls `claim(receiver, quantity, currency, pricePerToken, allowlistProof, data)` dengan gas agresif
+5. Waits for TX confirmation
 
-**"Public mint belum dikonfigurasi"**
-- Contract belum set startTime untuk public drop
-- Gunakan mode `monitor` untuk tunggu sampai aktif
+## Configuration
 
-**"Transaction reverted"**
-- Mint sudah sold out
-- Sudah mint max per wallet
-- Public mint belum/sudah berakhir
-- Gas terlalu rendah → naikkan `MAX_GAS_PRICE_GWEI`
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONTRACT_ADDRESS` | Lobster NFT contract | `0x1de237c7...704f2a74` |
+| `MINT_PRICE` | Mint price in ETH (0=auto-detect) | `0` |
+| `MINT_AMOUNT` | Quantity per claim | `1` |
+| `CURRENCY` | Payment currency address | Native ETH |
+| `PRIVATE_KEY` | Wallet private key | - |
+| `BOT_MODE` | monitor/instant/countdown | `monitor` |
+| `SPEED_MODE` | turbo/normal | `turbo` |
+| `MAX_GAS_PRICE_GWEI` | Max gas price | `100` |
+| `PRIORITY_FEE_GWEI` | Priority fee (tip) | `5` |
+| `POLL_INTERVAL_MS` | Check interval | `1000` |
 
-**"Insufficient funds"**
-- Butuh min 0.006 ETH (mint) + ~0.01 ETH (gas)
-- Top up wallet sebelum mint
+## Thirdweb Claim Condition
 
-**"Gas estimate gagal"**
-- Contract mungkin belum siap / sold out
-- Bot akan pakai fallback gasLimit 200000
+Bot ini otomatis membaca claim condition dari contract:
+
+- **startTimestamp** - Kapan claim dibuka
+- **maxClaimableSupply** - Max supply untuk phase ini
+- **supplyClaimed** - Sudah berapa yang di-claim
+- **quantityLimitPerWallet** - Max per wallet
+- **pricePerToken** - Harga per NFT
+- **merkleRoot** - Allowlist root (0x00...00 = public)
+
+Bot auto-detects apakah mint sudah live berdasarkan `startTimestamp`.
+
+## FCFS Strategy
+
+Untuk memaksimalkan chance di FCFS:
+
+1. **Gunakan premium RPC** (Alchemy/QuickNode) - lebih cepat broadcast TX
+2. **Set SPEED_MODE=turbo** - langsung pakai max gas
+3. **Naikkan PRIORITY_FEE_GWEI** - 5-20 Gwei untuk prioritas di mempool
+4. **Multi-wallet** - lebih banyak wallet = lebih banyak chance
+5. **POLL_INTERVAL_MS=500** - check lebih sering (hati-hati rate limit RPC)
+6. **Countdown mode** - jika tahu exact start time, kirim TX lebih awal
+
+## Security
+
+- Private key HANYA disimpan di `.env` (local)
+- `.env` sudah di `.gitignore`
+- Tidak ada data yang dikirim ke server external
+- Open source - bisa audit sendiri
+
+## Troubleshooting
+
+**"No active claim condition"** - Belum ada phase claim yang aktif di contract
+
+**"Starts in Xm Xs"** - Claim condition ada tapi belum waktunya
+
+**"SOLD OUT"** - `supplyClaimed >= maxClaimableSupply` atau `totalSupply >= maxSupply`
+
+**"Transaction reverted"** - Kemungkinan:
+  - Sudah claim max per wallet
+  - Salah harga (cek MINT_PRICE)
+  - Butuh allowlist proof (bukan public mint)
+  - Supply habis (race condition)
+
+**"Gas estimate failed"** - Normal jika claim belum buka, bot pakai fallback gasLimit
+
+**"Insufficient funds"** - Top up wallet: mint price + gas (~0.01-0.05 ETH)
+
+## Disclaimer
+
+Bot ini untuk educational purposes. Gunakan dengan risiko sendiri. Pastikan memahami gas fees dan risiko financial sebelum menggunakan.

@@ -6,7 +6,7 @@ class Logger {
   }
 
   static success(msg) {
-    console.log(`${chalk.green('[SUCCESS]')} ${chalk.gray(new Date().toLocaleTimeString())} ${msg}`);
+    console.log(`${chalk.green('[OK]')} ${chalk.gray(new Date().toLocaleTimeString())} ${msg}`);
   }
 
   static warn(msg) {
@@ -14,7 +14,7 @@ class Logger {
   }
 
   static error(msg) {
-    console.log(`${chalk.red('[ERROR]')} ${chalk.gray(new Date().toLocaleTimeString())} ${msg}`);
+    console.log(`${chalk.red('[ERR]')} ${chalk.gray(new Date().toLocaleTimeString())} ${msg}`);
   }
 
   static mint(msg) {
@@ -26,16 +26,17 @@ class Logger {
   }
 
   static banner() {
-    console.log(chalk.green(`
-    ╔══════════════════════════════════════════╗
-    ║  🦎 BOTMINT - Lacertians Public Mint 🦎  ║
-    ║    SeaDrop.mintPublic() - ETHEREUM       ║
-    ╚══════════════════════════════════════════╝
+    console.log(chalk.red(`
+    ╔═══════════════════════════════════════════════╗
+    ║     LOBSTER NFT - FCFS MINT BOT              ║
+    ║     lobsternft.lol/mint                      ║
+    ║     Speed-optimized for First Come First Serve║
+    ╚═══════════════════════════════════════════════╝
     `));
   }
 
   static divider() {
-    console.log(chalk.gray('─'.repeat(50)));
+    console.log(chalk.gray('─'.repeat(55)));
   }
 }
 

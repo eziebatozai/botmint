@@ -1,65 +1,71 @@
 /**
- * ABI untuk OpenSea SeaDrop mint mechanism - Lacertians (Ethereum Mainnet).
+ * ABI untuk Lobster NFT FCFS Mint Bot
+ * Contract: 0x1de237c7063a9ee531e06a6c3fba4e3e704f2a74
+ * Type: Thirdweb ERC721Drop (DropERC721)
+ * Chain: Ethereum Mainnet
  * 
- * Supports both SIGNED_PRESALE (WL) and PUBLIC mint via SeaDrop contract.
- * Signature diperoleh dari OpenSea API sebelum mint.
- * 
- * Flow: User -> OpenSea API (get signature) -> SeaDrop.mintSigned() -> NFTContract.mintSeaDrop()
+ * Mint function: claim(address _receiver, uint256 _quantity, address _currency,
+ *   uint256 _pricePerToken, AllowlistProof _allowlistProof, bytes _data)
  */
 
-// ABI untuk NFT Contract (ERC721SeaDrop) - untuk monitoring/read
-const NFT_CONTRACT_ABI = [
-  // mintSeaDrop - hanya bisa dipanggil oleh SeaDrop contract
-  "function mintSeaDrop(address minter, uint256 quantity) external",
-  
-  // Read functions
+// Thirdweb ERC721Drop - Full ABI untuk mint/claim
+const THIRDWEB_DROP_ABI = [
+  // === CLAIM (MINT) FUNCTION ===
+  "function claim(address _receiver, uint256 _quantity, address _currency, uint256 _pricePerToken, tuple(bytes32[] proof, uint256 quantityLimitPerWallet, uint256 pricePerToken, address currency) _allowlistProof, bytes _data) external payable",
+
+  // === READ FUNCTIONS ===
   "function totalSupply() external view returns (uint256)",
   "function maxSupply() external view returns (uint256)",
+  "function nextTokenIdToMint() external view returns (uint256)",
+  "function nextTokenIdToClaim() external view returns (uint256)",
   "function name() external view returns (string)",
   "function symbol() external view returns (string)",
   "function balanceOf(address owner) external view returns (uint256)",
-  "function baseURI() external view returns (string)",
-  
-  // SeaDrop specific reads
-  "function getMintStats(address minter) external view returns (uint256 minterNumMinted, uint256 currentTotalSupply, uint256 maxSupply)",
-  "function getPublicDrop(address seaDropImpl) external view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))",
-  "function getAllowedSeaDrop() external view returns (address[])",
+  "function ownerOf(uint256 tokenId) external view returns (address)",
+  "function tokenURI(uint256 tokenId) external view returns (string)",
+  "function contractURI() external view returns (string)",
+  "function owner() external view returns (address)",
+
+  // === CLAIM CONDITIONS ===
+  "function getActiveClaimConditionId() external view returns (uint256)",
+  "function getClaimConditionById(uint256 _conditionId) external view returns (tuple(uint256 startTimestamp, uint256 maxClaimableSupply, uint256 supplyClaimed, uint256 quantityLimitPerWallet, bytes32 merkleRoot, uint256 pricePerToken, address currency, string metadata))",
+  "function claimCondition() external view returns (uint256 currentStartId, uint256 count)",
+
+  // === VERIFY CLAIM ===
+  "function verifyClaim(uint256 _conditionId, address _claimer, uint256 _quantity, address _currency, uint256 _pricePerToken, tuple(bytes32[] proof, uint256 quantityLimitPerWallet, uint256 pricePerToken, address currency) _allowlistProof) external view returns (bool isOverride)",
+
+  // === SUPPLY INFO ===
+  "function getSupplyClaimedByWallet(uint256 _conditionId, address _claimer) external view returns (uint256)",
+
+  // === EVENTS ===
+  "event TokensClaimed(uint256 indexed claimConditionIndex, address indexed claimer, address indexed receiver, uint256 startTokenId, uint256 quantityClaimed)",
 ];
 
-// ABI untuk SeaDrop Contract - MINT SIGNED untuk FCFS!
-const SEADROP_ABI = [
-  // Signed mint - fungsi utama untuk FCFS/Presale
-  "function mintSigned(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity, tuple(uint80 mintPrice, uint16 maxTotalMintableByWallet, uint48 startTime, uint48 endTime, uint16 dropStageIndex, uint32 maxTokenSupplyForStage, uint16 feeBps, bool restrictFeeRecipients) mintParams, uint256 salt, bytes signature) external payable",
-
-  // Public mint - fallback jika perlu
-  "function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) external payable",
-  
-  // Get public drop info
-  "function getPublicDrop(address nftContract) external view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))",
-  
-  // Get fee recipients
-  "function getAllowedFeeRecipients(address nftContract) external view returns (address[])",
-  
-  // Get mint stats
-  "function getMintStats(address nftContract, address minter) external view returns (uint256 minterNumMinted, uint256 currentTotalSupply, uint256 maxSupply)",
+// Simplified read-only ABI for monitoring
+const NFT_READ_ABI = [
+  "function totalSupply() external view returns (uint256)",
+  "function maxSupply() external view returns (uint256)",
+  "function nextTokenIdToMint() external view returns (uint256)",
+  "function name() external view returns (string)",
+  "function symbol() external view returns (string)",
+  "function balanceOf(address owner) external view returns (uint256)",
+  "function owner() external view returns (address)",
+  "function contractURI() external view returns (string)",
+  "function getActiveClaimConditionId() external view returns (uint256)",
+  "function getClaimConditionById(uint256 _conditionId) external view returns (tuple(uint256 startTimestamp, uint256 maxClaimableSupply, uint256 supplyClaimed, uint256 quantityLimitPerWallet, bytes32 merkleRoot, uint256 pricePerToken, address currency, string metadata))",
+  "function claimCondition() external view returns (uint256 currentStartId, uint256 count)",
+  "function getSupplyClaimedByWallet(uint256 _conditionId, address _claimer) external view returns (uint256)",
 ];
 
-// SeaDrop contract addresses (OpenSea official)
-const SEADROP_ADDRESSES = {
-  // Base Mainnet
-  8453: '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
-  // Ethereum Mainnet
-  1: '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
-  // Sepolia Testnet
-  11155111: '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
-};
+// Native token address used by thirdweb for ETH payments
+const NATIVE_TOKEN_ADDRESS = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 
-// OpenSea fee recipient (official)
-const OPENSEA_FEE_RECIPIENT = '0x0000a26b00c1F0DF003000390027140000fAa719';
+// Zero address (for empty allowlist proof currency)
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-module.exports = { 
-  NFT_CONTRACT_ABI, 
-  SEADROP_ABI, 
-  SEADROP_ADDRESSES, 
-  OPENSEA_FEE_RECIPIENT,
+module.exports = {
+  THIRDWEB_DROP_ABI,
+  NFT_READ_ABI,
+  NATIVE_TOKEN_ADDRESS,
+  ZERO_ADDRESS,
 };
