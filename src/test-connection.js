@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * Test koneksi dan konfigurasi sebelum mint Lobster NFT
+ * Test koneksi dan konfigurasi sebelum claim Lobster NFT
+ * Contract: 0x1de237c7063a9ee531e06a6c3fba4e3e704f2a74 (Thirdweb ERC721Drop)
  */
 
 const { ethers } = require('ethers');
 const { config } = require('./config');
-const { NFT_READ_ABI, MINT_FUNCTIONS_ABI } = require('./abi');
+const { THIRDWEB_DROP_ABI, NATIVE_TOKEN_ADDRESS } = require('./abi');
 const Logger = require('./utils/logger');
 
 async function testConnection() {
@@ -28,7 +29,6 @@ async function testConnection() {
     Logger.error(`   RPC FAILED: ${e.message}`);
     errors++;
 
-    // Try backups
     for (const backup of config.rpcBackups) {
       try {
         provider = new ethers.JsonRpcProvider(backup, config.chainId);
@@ -56,7 +56,7 @@ async function testConnection() {
     Logger.success(`   Balance: ${ethers.formatEther(balance)} ETH`);
 
     if (balance === 0n) {
-      Logger.warn('   Balance 0! Top up wallet sebelum mint');
+      Logger.warn('   Balance 0! Top up wallet sebelum claim');
       errors++;
     }
   } catch (e) {
@@ -65,80 +65,90 @@ async function testConnection() {
   }
 
   // 3. Test Contract
-  Logger.info('3. Testing NFT contract...');
-  if (!config.contractAddress) {
-    Logger.error('   CONTRACT_ADDRESS not set! Edit .env');
-    errors++;
-  } else {
-    try {
-      const code = await provider.getCode(config.contractAddress);
+  Logger.info('3. Testing NFT contract (Thirdweb ERC721Drop)...');
+  try {
+    const code = await provider.getCode(config.contractAddress);
 
-      if (code === '0x') {
-        Logger.error('   Contract NOT FOUND at this address!');
-        errors++;
-      } else {
-        Logger.success(`   Contract found! Code size: ${(code.length - 2) / 2} bytes`);
-
-        const nftContract = new ethers.Contract(
-          config.contractAddress,
-          [...NFT_READ_ABI, ...MINT_FUNCTIONS_ABI],
-          provider
-        );
-
-        try {
-          const name = await nftContract.name();
-          const symbol = await nftContract.symbol();
-          Logger.success(`   Name: ${name} (${symbol})`);
-        } catch (e) {
-          Logger.warn('   name()/symbol() not available');
-        }
-
-        try {
-          const supply = await nftContract.totalSupply();
-          Logger.success(`   totalSupply(): ${supply.toString()}`);
-        } catch (e) {
-          Logger.warn('   totalSupply() not available');
-        }
-
-        let maxSup = null;
-        try { maxSup = await nftContract.maxSupply(); } catch (e) {}
-        if (!maxSup) try { maxSup = await nftContract.MAX_SUPPLY(); } catch (e) {}
-        if (maxSup) {
-          Logger.success(`   maxSupply: ${maxSup.toString()}`);
-        }
-
-        // Check mint function availability
-        Logger.info(`   Testing mint function: ${config.mintFunction}...`);
-        const fnName = config.mintFunction.split('(')[0];
-        if (nftContract[fnName]) {
-          Logger.success(`   Function "${fnName}" found in ABI`);
-        } else {
-          Logger.warn(`   Function "${fnName}" not found - may still work via raw call`);
-        }
-
-        // Check mint status
-        const statusFns = ['mintActive', 'isMintActive', 'saleActive', 'publicSaleActive', 'paused'];
-        for (const fn of statusFns) {
-          try {
-            const result = await nftContract[fn]();
-            Logger.info(`   ${fn}() = ${result}`);
-          } catch (e) { continue; }
-        }
-
-        // Check price
-        const priceFns = ['mintPrice', 'price', 'PRICE', 'cost', 'publicPrice'];
-        for (const fn of priceFns) {
-          try {
-            const p = await nftContract[fn]();
-            Logger.info(`   ${fn}() = ${ethers.formatEther(p)} ETH`);
-            break;
-          } catch (e) { continue; }
-        }
-      }
-    } catch (e) {
-      Logger.error(`   Contract FAILED: ${e.message}`);
+    if (code === '0x') {
+      Logger.error('   Contract NOT FOUND at this address!');
       errors++;
+    } else {
+      Logger.success(`   Contract found! Code size: ${(code.length - 2) / 2} bytes`);
+
+      const nftContract = new ethers.Contract(
+        config.contractAddress,
+        THIRDWEB_DROP_ABI,
+        provider
+      );
+
+      try {
+        const name = await nftContract.name();
+        const symbol = await nftContract.symbol();
+        Logger.success(`   Name: ${name} (${symbol})`);
+      } catch (e) {
+        Logger.warn('   name()/symbol() not available');
+      }
+
+      try {
+        const supply = await nftContract.totalSupply();
+        Logger.success(`   totalSupply(): ${supply.toString()}`);
+      } catch (e) {
+        Logger.warn('   totalSupply() not available');
+      }
+
+      try {
+        const maxSup = await nftContract.maxSupply();
+        Logger.success(`   maxSupply(): ${maxSup.toString()}`);
+      } catch (e) {
+        Logger.warn('   maxSupply() not available');
+      }
+
+      // Check claim condition
+      Logger.info('   Checking claim condition...');
+      try {
+        const conditionId = await nftContract.getActiveClaimConditionId();
+        Logger.success(`   Active Condition ID: ${conditionId.toString()}`);
+
+        const condition = await nftContract.getClaimConditionById(conditionId);
+        const startTime = Number(condition.startTimestamp);
+        const now = Math.floor(Date.now() / 1000);
+        const pricePerToken = ethers.formatEther(condition.pricePerToken);
+        const supplyClaimed = condition.supplyClaimed.toString();
+        const maxClaimable = condition.maxClaimableSupply.toString();
+        const quantityLimit = condition.quantityLimitPerWallet.toString();
+        const merkleRoot = condition.merkleRoot;
+
+        Logger.info(`   Price: ${pricePerToken} ETH`);
+        Logger.info(`   Claimed: ${supplyClaimed} / ${maxClaimable}`);
+        Logger.info(`   Limit/Wallet: ${quantityLimit}`);
+
+        const isPublic = merkleRoot === '0x0000000000000000000000000000000000000000000000000000000000000000';
+        Logger.info(`   Type: ${isPublic ? 'PUBLIC' : 'ALLOWLIST'}`);
+
+        if (startTime === 0) {
+          Logger.warn('   Start time: NOT SET');
+        } else if (startTime > now) {
+          const diff = startTime - now;
+          Logger.warn(`   Start time: ${new Date(startTime * 1000).toLocaleString()} (in ${Math.floor(diff / 60)}m)`);
+        } else {
+          Logger.success(`   Start time: ${new Date(startTime * 1000).toLocaleString()} (ACTIVE!)`);
+        }
+
+        // Check wallet claimed
+        if (process.env.PRIVATE_KEY) {
+          try {
+            const wallet = new ethers.Wallet(process.env.PRIVATE_KEY);
+            const claimed = await nftContract.getSupplyClaimedByWallet(conditionId, wallet.address);
+            Logger.info(`   Your wallet claimed: ${claimed.toString()}`);
+          } catch (e) {}
+        }
+      } catch (e) {
+        Logger.warn(`   No active claim condition: ${e.message.slice(0, 60)}`);
+      }
     }
+  } catch (e) {
+    Logger.error(`   Contract FAILED: ${e.message}`);
+    errors++;
   }
 
   // 4. Gas check
@@ -158,11 +168,11 @@ async function testConnection() {
   // 5. Config summary
   Logger.info('5. Configuration summary:');
   Logger.info(`   Bot Mode: ${config.botMode}`);
-  Logger.info(`   Mint Function: ${config.mintFunction}`);
+  Logger.info(`   Contract: ${config.contractAddress}`);
   Logger.info(`   Mint Price: ${config.mintPrice} ETH`);
   Logger.info(`   Mint Amount: ${config.mintAmount}`);
+  Logger.info(`   Currency: ${config.currency}`);
   Logger.info(`   Gas Limit: ${config.gasLimit}`);
-  Logger.info(`   Pre-sign TX: ${config.preSign}`);
   Logger.info(`   Poll Interval: ${config.pollInterval}ms`);
 
   // Summary
@@ -170,7 +180,7 @@ async function testConnection() {
   if (errors === 0) {
     Logger.success('All tests PASSED! Bot ready to run.');
     Logger.info('   Monitor: npm run monitor');
-    Logger.info('   Mint:    npm start');
+    Logger.info('   Claim:   npm start');
     Logger.info('   Instant: npm run instant');
   } else {
     Logger.error(`${errors} test(s) FAILED. Fix configuration before running bot.`);

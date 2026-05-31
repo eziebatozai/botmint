@@ -9,22 +9,27 @@ const config = {
     'https://1rpc.io/eth'
   ],
 
-  // Contract - Lobster NFT (lobsternft.lol)
-  contractAddress: process.env.CONTRACT_ADDRESS || '',
+  // Contract - Lobster NFT (lobsternft.lol) - Thirdweb ERC721Drop
+  contractAddress: process.env.CONTRACT_ADDRESS || '0x1de237c7063a9ee531e06a6c3fba4e3e704f2a74',
   mintPrice: process.env.MINT_PRICE || '0',
   mintAmount: parseInt(process.env.MINT_AMOUNT || '1'),
   maxPerWallet: parseInt(process.env.MAX_PER_WALLET || '1'),
 
-  // Mint function configuration
-  // Supported: 'mint', 'publicMint', 'mintPublic', 'claim', 'purchase', 'custom'
-  mintFunction: process.env.MINT_FUNCTION || 'mint',
-  // Custom function signature (jika MINT_FUNCTION=custom)
-  // Contoh: "mint(uint256)" atau "publicMint(uint256,bytes32[])"
-  customMintSig: process.env.CUSTOM_MINT_SIG || '',
+  // Thirdweb claim() settings
+  // currency: address(0) = native ETH, or ERC20 token address
+  currency: process.env.CURRENCY || '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+  // AllowlistProof (kosong untuk public mint)
+  allowlistProof: {
+    proof: [],
+    quantityLimitPerWallet: parseInt(process.env.QUANTITY_LIMIT_PER_WALLET || '0'),
+    pricePerToken: process.env.ALLOWLIST_PRICE || '0',
+    currency: process.env.ALLOWLIST_CURRENCY || '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+  },
 
   // Collection info
   collectionName: process.env.COLLECTION_NAME || 'Lobster NFT',
   collectionUrl: process.env.COLLECTION_URL || 'https://lobsternft.lol/mint',
+  maxSupply: 3333,
 
   // Gas Configuration (agresif untuk FCFS)
   maxGasPriceGwei: parseFloat(process.env.MAX_GAS_PRICE_GWEI || '100'),
@@ -33,24 +38,18 @@ const config = {
   gasMultiplier: parseFloat(process.env.GAS_MULTIPLIER || '1.5'),
 
   // FCFS Speed Settings
-  // "turbo" = submit tx sebelum block confirm (aggressive nonce)
-  // "normal" = standard execution
   speedMode: process.env.SPEED_MODE || 'turbo',
-  // Jumlah TX paralel per wallet (untuk meningkatkan chance)
   parallelTx: parseInt(process.env.PARALLEL_TX || '1'),
-  // Pre-sign transactions sebelum mint aktif
   preSign: process.env.PRE_SIGN !== 'false',
 
   // Bot Mode
   // "monitor" = polling sampai mint aktif, lalu auto-mint
-  // "instant" = langsung mint sekarang
-  // "snipe" = monitor pending tx di mempool, lalu front-run
+  // "instant" = langsung mint sekarang (claim)
   // "countdown" = mint pada waktu tertentu
   botMode: process.env.BOT_MODE || 'monitor',
-  
-  // Countdown mode - waktu mint target (Unix timestamp atau ISO string)
+
+  // Countdown mode
   mintStartTime: process.env.MINT_START_TIME || '',
-  // Offset sebelum start time (ms) - kirim tx lebih awal
   countdownOffsetMs: parseInt(process.env.COUNTDOWN_OFFSET_MS || '2000'),
 
   // Polling & Retry
@@ -58,7 +57,7 @@ const config = {
   maxRetries: parseInt(process.env.MAX_RETRIES || '5'),
   retryDelay: parseInt(process.env.RETRY_DELAY_MS || '500'),
 
-  // Chain
+  // Chain - Ethereum Mainnet
   chainId: parseInt(process.env.CHAIN_ID || '1'),
 
   // Notifications
@@ -74,7 +73,7 @@ function validateConfig() {
   const errors = [];
 
   if (!config.contractAddress || config.contractAddress === '') {
-    errors.push('CONTRACT_ADDRESS belum diset! Cek contract di lobsternft.lol/mint');
+    errors.push('CONTRACT_ADDRESS belum diset!');
   }
 
   if (!process.env.PRIVATE_KEY && !process.env.PRIVATE_KEYS) {
@@ -83,10 +82,6 @@ function validateConfig() {
 
   if (!config.rpcUrl || config.rpcUrl.includes('YOUR_API_KEY')) {
     errors.push('RPC_URL belum dikonfigurasi! Gunakan Alchemy/Infura/QuickNode untuk speed terbaik');
-  }
-
-  if (config.mintFunction === 'custom' && !config.customMintSig) {
-    errors.push('CUSTOM_MINT_SIG harus diset jika MINT_FUNCTION=custom');
   }
 
   if (config.botMode === 'countdown' && !config.mintStartTime) {
