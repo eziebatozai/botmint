@@ -1,12 +1,14 @@
 {
-  "name": "botmint-lacertians",
-  "version": "2.0.0",
-  "description": "Auto Mint Bot for Lacertians NFT Collection (OpenSea Drop - Ethereum)",
+  "name": "lobster-nft-fcfs-bot",
+  "version": "3.0.0",
+  "description": "FCFS Mint Bot for Lobster NFT (lobsternft.lol) - Speed-optimized First Come First Serve",
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",
     "monitor": "node src/monitor.js",
-    "test-connection": "node src/test-connection.js"
+    "test-connection": "node src/test-connection.js",
+    "instant": "BOT_MODE=instant node src/bot.js",
+    "countdown": "BOT_MODE=countdown node src/bot.js"
   },
   "dependencies": {
     "ethers": "^6.13.0",

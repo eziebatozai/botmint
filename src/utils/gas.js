@@ -10,28 +10,34 @@ class GasEstimator {
   async getOptimalGasSettings() {
     try {
       const feeData = await this.provider.getFeeData();
-      
+
+      // For FCFS: use aggressive priority fee
       const maxPriorityFeePerGas = ethers.parseUnits(
         this.config.priorityFeeGwei.toString(),
         'gwei'
       );
 
-      let maxFeePerGas = feeData.maxFeePerGas;
+      let maxFeePerGas = feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei');
       const maxGasLimit = ethers.parseUnits(
         this.config.maxGasPriceGwei.toString(),
         'gwei'
       );
 
-      // Cap gas price jika melebihi limit
-      if (maxFeePerGas > maxGasLimit) {
-        Logger.warn(`Gas price ${ethers.formatUnits(maxFeePerGas, 'gwei')} Gwei melebihi limit ${this.config.maxGasPriceGwei} Gwei`);
+      // In turbo mode, use max gas directly for speed
+      if (this.config.speedMode === 'turbo') {
         maxFeePerGas = maxGasLimit;
+      } else {
+        // Cap gas price if exceeds limit
+        if (maxFeePerGas > maxGasLimit) {
+          Logger.warn(`Gas ${ethers.formatUnits(maxFeePerGas, 'gwei')} Gwei > limit ${this.config.maxGasPriceGwei} Gwei`);
+          maxFeePerGas = maxGasLimit;
+        }
       }
 
-      // Tambahkan priority fee
+      // Add priority fee on top
       maxFeePerGas = maxFeePerGas + maxPriorityFeePerGas;
 
-      Logger.gas(`Max Fee: ${ethers.formatUnits(maxFeePerGas, 'gwei')} Gwei | Priority: ${ethers.formatUnits(maxPriorityFeePerGas, 'gwei')} Gwei`);
+      Logger.gas(`MaxFee: ${ethers.formatUnits(maxFeePerGas, 'gwei')} Gwei | Priority: ${ethers.formatUnits(maxPriorityFeePerGas, 'gwei')} Gwei`);
 
       return {
         maxFeePerGas,
@@ -39,8 +45,8 @@ class GasEstimator {
         type: 2, // EIP-1559
       };
     } catch (error) {
-      Logger.error(`Gagal estimasi gas: ${error.message}`);
-      // Fallback ke legacy gas pricing
+      Logger.error(`Gas estimation failed: ${error.message}`);
+      // Fallback to legacy gas pricing
       const gasPrice = ethers.parseUnits(
         this.config.maxGasPriceGwei.toString(),
         'gwei'
@@ -56,14 +62,13 @@ class GasEstimator {
       }
 
       const estimated = await contract[functionName].estimateGas(...args, { value });
-      // Tambahkan buffer
       const withBuffer = (estimated * BigInt(Math.floor(this.config.gasMultiplier * 100))) / 100n;
-      
-      Logger.gas(`Estimated gas limit: ${estimated.toString()} (with buffer: ${withBuffer.toString()})`);
+
+      Logger.gas(`Estimated: ${estimated.toString()} (buffered: ${withBuffer.toString()})`);
       return withBuffer;
     } catch (error) {
-      Logger.warn(`Gas estimate gagal, menggunakan default 300000: ${error.message}`);
-      return 300000n;
+      Logger.warn(`Gas estimate failed, using default ${this.config.gasLimit}: ${error.message}`);
+      return BigInt(this.config.gasLimit || 300000);
     }
   }
 }

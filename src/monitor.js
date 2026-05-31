@@ -1,34 +1,36 @@
 #!/usr/bin/env node
 
 /**
- * Monitor-only mode - Cek status PUBLIC MINT di SeaDrop contract (on-chain)
- * Berguna untuk memantau kapan public mint dibuka sebelum menjalankan bot utama
+ * Lobster NFT - FCFS Mint Monitor
+ * Monitor contract status tanpa auto-mint
  */
 
 const { ethers } = require('ethers');
 const { config } = require('./config');
-const { NFT_CONTRACT_ABI, SEADROP_ABI, SEADROP_ADDRESSES, OPENSEA_FEE_RECIPIENT } = require('./abi');
+const { NFT_READ_ABI, MINT_FUNCTIONS_ABI } = require('./abi');
 const Logger = require('./utils/logger');
-
-// ============================================
-// MONITOR MAIN
-// ============================================
 
 async function monitor() {
   Logger.banner();
-  Logger.info('🔍 MODE: Lacertians PUBLIC MINT Monitor');
-  Logger.info('📋 Protocol: SeaDrop.mintPublic() - Ethereum Mainnet');
+  Logger.info('MODE: MONITOR ONLY (no auto-mint)');
+  Logger.info(`Contract: ${config.contractAddress}`);
+  Logger.info(`Collection: ${config.collectionName}`);
   Logger.divider();
 
-  const provider = new ethers.JsonRpcProvider(config.rpcUrl, config.chainId);
-  const nftContract = new ethers.Contract(config.contractAddress, NFT_CONTRACT_ABI, provider);
-  
-  const seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[1];
-  const seaDropContract = new ethers.Contract(seaDropAddress, SEADROP_ABI, provider);
+  if (!config.contractAddress) {
+    Logger.error('CONTRACT_ADDRESS not set! Edit .env first.');
+    process.exit(1);
+  }
 
-  // Get wallet address for balance check
+  const provider = new ethers.JsonRpcProvider(config.rpcUrl, config.chainId);
+  const nftContract = new ethers.Contract(
+    config.contractAddress,
+    [...NFT_READ_ABI, ...MINT_FUNCTIONS_ABI],
+    provider
+  );
+
+  // Get wallet info if available
   let walletAddress = null;
-  let walletBalance = '?';
   if (process.env.PRIVATE_KEY) {
     try {
       const wallet = new ethers.Wallet(process.env.PRIVATE_KEY);
@@ -36,118 +38,114 @@ async function monitor() {
     } catch (e) {}
   }
 
-  Logger.info(`NFT Contract: ${config.contractAddress}`);
-  Logger.info(`SeaDrop: ${seaDropAddress}`);
-  Logger.info(`Collection: ${config.collectionSlug}`);
-  Logger.info(`Mint Price: ${config.mintPrice} ETH`);
-  if (walletAddress) Logger.info(`Wallet: ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`);
-  Logger.info(`RPC: ${config.rpcUrl.slice(0, 40)}...`);
-  Logger.divider();
-
   let iteration = 0;
 
   while (true) {
     iteration++;
-    
+
     try {
-      // Supply info from contract
-      let totalSupply = '?', maxSupply = '?';
+      // Basic contract info
+      let name = '?', totalSupply = '?', maxSupply = '?';
+      try { name = await nftContract.name(); } catch (e) {}
       try { totalSupply = (await nftContract.totalSupply()).toString(); } catch (e) {}
       try { maxSupply = (await nftContract.maxSupply()).toString(); } catch (e) {}
+      if (maxSupply === '?') {
+        try { maxSupply = (await nftContract.MAX_SUPPLY()).toString(); } catch (e) {}
+      }
 
-      // Block info
+      // Block & gas info
       const blockNumber = await provider.getBlockNumber();
       const feeData = await provider.getFeeData();
       const gasPrice = ethers.formatUnits(feeData.gasPrice || 0n, 'gwei');
 
+      // Check mint status
+      let mintStatus = 'UNKNOWN';
+      let isActive = false;
+
+      const statusChecks = [
+        'mintActive', 'isMintActive', 'saleActive',
+        'publicSaleActive', 'isPublicSaleActive', 'saleIsActive',
+        'mintEnabled', 'publicMintOpen',
+      ];
+
+      for (const fn of statusChecks) {
+        try {
+          const result = await nftContract[fn]();
+          mintStatus = `${fn}() = ${result}`;
+          isActive = result === true;
+          break;
+        } catch (e) { continue; }
+      }
+
+      // Check paused (inverted)
+      if (mintStatus === 'UNKNOWN') {
+        try {
+          const paused = await nftContract.paused();
+          mintStatus = `paused() = ${paused}`;
+          isActive = !paused;
+        } catch (e) {}
+      }
+
+      // On-chain price
+      let onchainPrice = null;
+      const priceFns = ['mintPrice', 'price', 'PRICE', 'cost', 'getPrice', 'publicPrice'];
+      for (const fn of priceFns) {
+        try {
+          onchainPrice = await nftContract[fn]();
+          break;
+        } catch (e) { continue; }
+      }
+
       // Wallet balance
+      let walletBalance = '?';
+      let walletMinted = '?';
       if (walletAddress) {
         try {
           const bal = await provider.getBalance(walletAddress);
           walletBalance = ethers.formatEther(bal).slice(0, 8);
         } catch (e) {}
-      }
-
-      // Fetch PUBLIC DROP info from SeaDrop contract (on-chain)
-      let mintStatus = 'UNKNOWN';
-      let onchainPrice = '?';
-      let maxPerWallet = '?';
-      let startTime = 0;
-      let endTime = 0;
-      let isActive = false;
-
-      try {
-        const publicDrop = await seaDropContract.getPublicDrop(config.contractAddress);
-        
-        onchainPrice = ethers.formatEther(publicDrop.mintPrice || 0n);
-        maxPerWallet = Number(publicDrop.maxTotalMintableByWallet).toString();
-        startTime = Number(publicDrop.startTime);
-        endTime = Number(publicDrop.endTime);
-        
-        const now = Math.floor(Date.now() / 1000);
-
-        if (startTime === 0) {
-          mintStatus = '⚪ Public mint belum dikonfigurasi';
-        } else if (now < startTime) {
-          const diff = startTime - now;
-          const hours = Math.floor(diff / 3600);
-          const mins = Math.floor((diff % 3600) / 60);
-          const secs = diff % 60;
-          mintStatus = `⏳ Mulai dalam ${hours}h ${mins}m ${secs}s`;
-        } else if (endTime > 0 && now >= endTime) {
-          mintStatus = '🔴 PUBLIC MINT SUDAH BERAKHIR';
-        } else {
-          mintStatus = '🟢 PUBLIC MINT AKTIF! SIAP MINT!';
-          isActive = true;
-        }
-      } catch (e) {
-        mintStatus = `❓ Error: ${e.message.slice(0, 50)}`;
-      }
-
-      // Mint stats per wallet
-      let walletMinted = '?';
-      if (walletAddress) {
         try {
-          const stats = await seaDropContract.getMintStats(config.contractAddress, walletAddress);
-          walletMinted = stats.minterNumMinted.toString();
-        } catch (e) {}
+          walletMinted = (await nftContract.numberMinted(walletAddress)).toString();
+        } catch (e) {
+          try {
+            walletMinted = (await nftContract.balanceOf(walletAddress)).toString();
+          } catch (e) {}
+        }
       }
 
       // Display
       console.clear();
       Logger.banner();
-      Logger.info(`📊 PUBLIC MINT MONITOR - Iteration #${iteration}`);
+      Logger.info(`LOBSTER NFT MONITOR - #${iteration}`);
       Logger.divider();
-      Logger.info(`NFT Contract: ${config.contractAddress}`);
-      Logger.info(`SeaDrop:      ${seaDropAddress}`);
-      Logger.info(`Collection:   ${config.collectionSlug}`);
-      Logger.info(`Block:        ${blockNumber}`);
-      Logger.info(`Gas Price:    ${parseFloat(gasPrice).toFixed(2)} Gwei`);
+      Logger.info(`Contract:  ${config.contractAddress}`);
+      Logger.info(`Name:      ${name}`);
+      Logger.info(`Block:     ${blockNumber}`);
+      Logger.info(`Gas:       ${parseFloat(gasPrice).toFixed(2)} Gwei`);
       Logger.divider();
-      Logger.info(`Supply:       ${totalSupply} / ${maxSupply}`);
-      Logger.info(`Mint Price:   ${onchainPrice} ETH (on-chain)`);
-      Logger.info(`Max/Wallet:   ${maxPerWallet}`);
-      if (startTime > 0) {
-        Logger.info(`Start Time:   ${new Date(startTime * 1000).toLocaleString()}`);
-      }
-      if (endTime > 0) {
-        Logger.info(`End Time:     ${new Date(endTime * 1000).toLocaleString()}`);
+      Logger.info(`Supply:    ${totalSupply} / ${maxSupply}`);
+      if (onchainPrice) {
+        Logger.info(`Price:     ${ethers.formatEther(onchainPrice)} ETH`);
       }
       Logger.divider();
+
       if (walletAddress) {
-        Logger.info(`Wallet:       ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`);
-        Logger.info(`Balance:      ${walletBalance} ETH`);
-        Logger.info(`Already Mint: ${walletMinted}`);
+        Logger.info(`Wallet:    ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`);
+        Logger.info(`Balance:   ${walletBalance} ETH`);
+        Logger.info(`Minted:    ${walletMinted}`);
         Logger.divider();
       }
-      Logger.info(`STATUS:       ${mintStatus}`);
-      Logger.divider();
-      Logger.info(`Polling every ${config.pollInterval}ms... (Ctrl+C to stop)`);
 
       if (isActive) {
-        Logger.success('\n🚨 PUBLIC MINT IS LIVE! Jalankan: npm start');
+        Logger.success(`STATUS: MINT IS LIVE!`);
+        Logger.success(`Run "npm start" to mint!`);
         process.stdout.write('\x07'); // Beep
+      } else {
+        Logger.warn(`STATUS: ${mintStatus}`);
       }
+
+      Logger.divider();
+      Logger.info(`Polling every ${config.pollInterval}ms... (Ctrl+C to stop)`);
 
     } catch (error) {
       Logger.error(`Error: ${error.message}`);
@@ -158,7 +156,7 @@ async function monitor() {
 }
 
 process.on('SIGINT', () => {
-  Logger.warn('\nMonitor dihentikan.');
+  Logger.warn('\nMonitor stopped.');
   process.exit(0);
 });
 

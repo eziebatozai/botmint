@@ -26,7 +26,7 @@ class WalletManager {
     }
 
     if (this.wallets.length === 0) {
-      throw new Error('Tidak ada wallet yang dikonfigurasi! Set PRIVATE_KEY atau PRIVATE_KEYS di .env');
+      throw new Error('No wallets configured! Set PRIVATE_KEY or PRIVATE_KEYS in .env');
     }
 
     Logger.info(`Loaded ${this.wallets.length} wallet(s)`);
@@ -36,17 +36,17 @@ class WalletManager {
   async checkBalances() {
     Logger.divider();
     Logger.info('Checking wallet balances...');
-    
+
     for (const wallet of this.wallets) {
       const balance = await this.provider.getBalance(wallet.address);
       const balanceEth = ethers.formatEther(balance);
-      
+
       const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
-      
+
       if (balance === 0n) {
-        Logger.warn(`Wallet ${shortAddr}: ${balanceEth} ETH (KOSONG!)`);
+        Logger.warn(`${shortAddr}: ${balanceEth} ETH (EMPTY!)`);
       } else {
-        Logger.info(`Wallet ${shortAddr}: ${balanceEth} ETH`);
+        Logger.info(`${shortAddr}: ${balanceEth} ETH`);
       }
     }
     Logger.divider();

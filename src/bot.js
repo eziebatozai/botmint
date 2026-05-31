@@ -2,37 +2,38 @@
 
 const { ethers } = require('ethers');
 const { config, validateConfig } = require('./config');
-const { NFT_CONTRACT_ABI, SEADROP_ABI, SEADROP_ADDRESSES, OPENSEA_FEE_RECIPIENT } = require('./abi');
+const { NFT_READ_ABI, MINT_FUNCTIONS_ABI, SEADROP_ABI, SEADROP_ADDRESSES, OPENSEA_FEE_RECIPIENT } = require('./abi');
 const Logger = require('./utils/logger');
 const WalletManager = require('./utils/wallet');
 const GasEstimator = require('./utils/gas');
 const Notifier = require('./utils/notifier');
 
 // ============================================
-// MAIN BOT CLASS - SeaDrop PUBLIC MINT (Ethereum)
+// LOBSTER NFT - FCFS MINT BOT
+// Speed-optimized for First Come First Serve
 // ============================================
 
-class MintBot {
+class LobsterMintBot {
   constructor() {
     this.provider = null;
     this.walletManager = null;
     this.gasEstimator = null;
     this.notifier = null;
     this.nftContract = null;
-    this.seaDropContract = null;
-    this.seaDropAddress = null;
-    this.feeRecipient = OPENSEA_FEE_RECIPIENT;
     this.isMinting = false;
     this.mintResults = [];
+    this.mintFunctionName = null;
+    this.mintFunctionFragment = null;
+    this.preSignedTxs = [];
   }
 
   async initialize() {
     Logger.banner();
     validateConfig();
 
-    // Setup provider dengan fallback
+    // Setup provider
     this.provider = await this.setupProvider();
-    
+
     // Setup wallet
     this.walletManager = new WalletManager(this.provider);
     this.walletManager.loadWallets();
@@ -44,36 +45,34 @@ class MintBot {
     // Setup notifier
     this.notifier = new Notifier(config.enableNotifications);
 
-    // Setup NFT contract (untuk monitoring)
+    // Setup NFT contract (read-only)
     this.nftContract = new ethers.Contract(
       config.contractAddress,
-      NFT_CONTRACT_ABI,
+      [...NFT_READ_ABI, ...MINT_FUNCTIONS_ABI],
       this.provider
     );
 
-    // Setup SeaDrop contract
-    this.seaDropAddress = SEADROP_ADDRESSES[config.chainId] || SEADROP_ADDRESSES[1];
-    this.seaDropContract = new ethers.Contract(
-      this.seaDropAddress,
-      SEADROP_ABI,
-      this.provider
-    );
+    // Detect mint function
+    await this.detectMintFunction();
 
-    // Resolve fee recipient dari contract
-    await this.resolveFeeRecipient();
-
-    Logger.info(`NFT Contract: ${config.contractAddress}`);
-    Logger.info(`SeaDrop Contract: ${this.seaDropAddress}`);
-    Logger.info(`Fee Recipient: ${this.feeRecipient}`);
-    Logger.info(`Collection: ${config.collectionSlug}`);
+    // Display config
+    Logger.info(`Contract: ${config.contractAddress}`);
+    Logger.info(`Collection: ${config.collectionName}`);
     Logger.info(`Mint Price: ${config.mintPrice} ETH`);
     Logger.info(`Mint Amount: ${config.mintAmount}`);
-    Logger.info(`Chain: Ethereum (${config.chainId})`);
-    Logger.info(`Mode: ${config.botMode}`);
+    Logger.info(`Mint Function: ${this.mintFunctionName}`);
+    Logger.info(`Chain ID: ${config.chainId}`);
+    Logger.info(`Mode: ${config.botMode.toUpperCase()}`);
+    Logger.info(`Speed: ${config.speedMode.toUpperCase()}`);
     Logger.divider();
 
-    // Show public drop info
-    await this.showPublicDropInfo();
+    // Show contract info
+    await this.showContractInfo();
+
+    // Pre-sign transactions if enabled
+    if (config.preSign && config.botMode === 'monitor') {
+      await this.preSignTransactions();
+    }
   }
 
   async setupProvider() {
@@ -83,9 +82,8 @@ class MintBot {
       Logger.success(`Connected to network: ${network.name} (chainId: ${network.chainId})`);
       return provider;
     } catch (error) {
-      Logger.warn(`Primary RPC gagal: ${error.message}`);
-      
-      // Coba backup RPCs
+      Logger.warn(`Primary RPC failed: ${error.message}`);
+
       for (const backupUrl of config.rpcBackups) {
         try {
           const provider = new ethers.JsonRpcProvider(backupUrl, config.chainId);
@@ -97,169 +95,309 @@ class MintBot {
         }
       }
 
-      throw new Error('Semua RPC gagal! Periksa konfigurasi RPC_URL');
-    }
-  }
-
-  async resolveFeeRecipient() {
-    try {
-      const feeRecipients = await this.seaDropContract.getAllowedFeeRecipients(config.contractAddress);
-      if (feeRecipients && feeRecipients.length > 0) {
-        this.feeRecipient = feeRecipients[0];
-        Logger.info(`Fee recipient resolved: ${this.feeRecipient}`);
-      }
-    } catch (e) {
-      Logger.warn(`Tidak bisa resolve fee recipient, menggunakan default: ${this.feeRecipient}`);
-    }
-  }
-
-  async showPublicDropInfo() {
-    try {
-      const publicDrop = await this.seaDropContract.getPublicDrop(config.contractAddress);
-      
-      const mintPrice = ethers.formatEther(publicDrop.mintPrice || 0n);
-      const startTime = Number(publicDrop.startTime);
-      const endTime = Number(publicDrop.endTime);
-      const maxPerWallet = Number(publicDrop.maxTotalMintableByWallet);
-      const now = Math.floor(Date.now() / 1000);
-
-      Logger.divider();
-      Logger.info('📋 PUBLIC DROP INFO (on-chain):');
-      Logger.info(`   Mint Price: ${mintPrice} ETH`);
-      Logger.info(`   Max/Wallet: ${maxPerWallet}`);
-      Logger.info(`   Start: ${startTime > 0 ? new Date(startTime * 1000).toLocaleString() : 'Not set'}`);
-      Logger.info(`   End: ${endTime > 0 ? new Date(endTime * 1000).toLocaleString() : 'Not set'}`);
-      
-      if (startTime > 0 && now >= startTime && (endTime === 0 || now < endTime)) {
-        Logger.success(`   Status: 🟢 PUBLIC MINT AKTIF!`);
-      } else if (startTime > 0 && now < startTime) {
-        const diff = startTime - now;
-        Logger.warn(`   Status: ⏳ Belum mulai (${Math.floor(diff / 60)} menit lagi)`);
-      } else if (endTime > 0 && now >= endTime) {
-        Logger.error(`   Status: 🔴 SUDAH BERAKHIR`);
-      } else {
-        Logger.warn(`   Status: ❓ Tidak bisa ditentukan`);
-      }
-      Logger.divider();
-    } catch (e) {
-      Logger.warn(`Tidak bisa fetch public drop info: ${e.message}`);
-      Logger.info('Bot tetap akan mencoba mint...');
-      Logger.divider();
+      throw new Error('All RPCs failed! Check RPC_URL configuration');
     }
   }
 
   // ============================================
-  // PUBLIC MINT STATUS CHECK
+  // DETECT MINT FUNCTION (auto-detect from contract)
   // ============================================
 
-  async checkPublicMintStatus() {
+  async detectMintFunction() {
+    const mintFunc = config.mintFunction.toLowerCase();
+
+    if (mintFunc === 'custom') {
+      // Custom function signature
+      this.mintFunctionName = config.customMintSig;
+      Logger.info(`Using custom mint function: ${this.mintFunctionName}`);
+      return;
+    }
+
+    // Mapping of common function names
+    const functionMap = {
+      'mint': 'mint(uint256)',
+      'publicmint': 'publicMint(uint256)',
+      'mintpublic': 'mintPublic(uint256)',
+      'claim': 'claim(uint256)',
+      'purchase': 'purchase(uint256)',
+      'safemint': 'safeMint(uint256)',
+      'mintnft': 'mintNFT(uint256)',
+      'buy': 'buy(uint256)',
+    };
+
+    this.mintFunctionName = functionMap[mintFunc] || 'mint(uint256)';
+
+    // Try to verify function exists on contract
     try {
-      const publicDrop = await this.seaDropContract.getPublicDrop(config.contractAddress);
-      
-      const startTime = Number(publicDrop.startTime);
-      const endTime = Number(publicDrop.endTime);
-      const now = Math.floor(Date.now() / 1000);
-
-      if (startTime === 0) {
-        return { active: false, reason: 'Public mint belum dikonfigurasi (startTime=0)' };
+      const code = await this.provider.getCode(config.contractAddress);
+      if (code === '0x') {
+        Logger.error('Contract address has no code! Check CONTRACT_ADDRESS');
+        process.exit(1);
       }
-
-      if (now < startTime) {
-        const diff = startTime - now;
-        return { active: false, reason: `Belum mulai (${Math.floor(diff / 60)}m ${diff % 60}s lagi)` };
-      }
-
-      if (endTime > 0 && now >= endTime) {
-        return { active: false, reason: 'Public mint sudah berakhir' };
-      }
-
-      return { active: true };
+      Logger.success(`Contract verified at ${config.contractAddress}`);
     } catch (e) {
-      return { active: false, reason: `Error cek status: ${e.message}` };
+      Logger.warn(`Cannot verify contract: ${e.message}`);
     }
   }
 
-  async getSupplyInfo() {
+  async showContractInfo() {
     try {
-      let totalSupply = '?';
-      let maxSupply = '?';
+      Logger.info('Fetching contract info...');
+      
+      let name = '?', symbol = '?', totalSupply = '?', maxSupply = '?';
 
+      try { name = await this.nftContract.name(); } catch (e) {}
+      try { symbol = await this.nftContract.symbol(); } catch (e) {}
       try { totalSupply = (await this.nftContract.totalSupply()).toString(); } catch (e) {}
       try { maxSupply = (await this.nftContract.maxSupply()).toString(); } catch (e) {}
+      if (maxSupply === '?') {
+        try { maxSupply = (await this.nftContract.MAX_SUPPLY()).toString(); } catch (e) {}
+      }
 
-      return { totalSupply, maxSupply };
+      Logger.divider();
+      Logger.info(`Name: ${name} (${symbol})`);
+      Logger.info(`Supply: ${totalSupply} / ${maxSupply}`);
+
+      // Check mint status
+      const mintStatus = await this.checkMintActive();
+      if (mintStatus.active) {
+        Logger.success(`Mint Status: ACTIVE`);
+      } else {
+        Logger.warn(`Mint Status: ${mintStatus.reason}`);
+      }
+
+      // Check on-chain price
+      let onchainPrice = null;
+      try { onchainPrice = await this.nftContract.mintPrice(); } catch (e) {}
+      if (!onchainPrice) try { onchainPrice = await this.nftContract.price(); } catch (e) {}
+      if (!onchainPrice) try { onchainPrice = await this.nftContract.PRICE(); } catch (e) {}
+      if (!onchainPrice) try { onchainPrice = await this.nftContract.cost(); } catch (e) {}
+      if (!onchainPrice) try { onchainPrice = await this.nftContract.getPrice(); } catch (e) {}
+      if (!onchainPrice) try { onchainPrice = await this.nftContract.publicPrice(); } catch (e) {}
+
+      if (onchainPrice) {
+        Logger.info(`On-chain Price: ${ethers.formatEther(onchainPrice)} ETH`);
+      }
+
+      Logger.divider();
     } catch (e) {
-      return { totalSupply: '?', maxSupply: '?' };
+      Logger.warn(`Cannot fetch contract info: ${e.message}`);
     }
   }
 
   // ============================================
-  // SEADROP PUBLIC MINT EXECUTION
+  // CHECK MINT STATUS (supports various contracts)
+  // ============================================
+
+  async checkMintActive() {
+    // Try various mint status functions
+    const checks = [
+      { fn: 'mintActive', invert: false },
+      { fn: 'isMintActive', invert: false },
+      { fn: 'saleActive', invert: false },
+      { fn: 'publicSaleActive', invert: false },
+      { fn: 'isPublicSaleActive', invert: false },
+      { fn: 'saleIsActive', invert: false },
+      { fn: 'mintEnabled', invert: false },
+      { fn: 'publicMintOpen', invert: false },
+      { fn: 'paused', invert: true }, // paused=false means active
+    ];
+
+    for (const check of checks) {
+      try {
+        const result = await this.nftContract[check.fn]();
+        const isActive = check.invert ? !result : result;
+        if (isActive) {
+          return { active: true, method: check.fn };
+        } else {
+          return { active: false, reason: `${check.fn}() = ${result}` };
+        }
+      } catch (e) {
+        // Function doesn't exist, try next
+        continue;
+      }
+    }
+
+    // If no status function found, try estimating gas for mint
+    try {
+      const wallet = this.walletManager.getPrimaryWallet();
+      const contract = this.nftContract.connect(wallet);
+      const mintPriceWei = ethers.parseEther(config.mintPrice);
+
+      await contract.mint.estimateGas(config.mintAmount, { value: mintPriceWei });
+      return { active: true, method: 'gas_estimate' };
+    } catch (e) {
+      if (e.message.includes('not active') || e.message.includes('not started') || e.message.includes('paused')) {
+        return { active: false, reason: `Mint not active (${e.message.slice(0, 60)})` };
+      }
+      // Could be active but failing for other reasons
+      return { active: false, reason: `Unknown (${e.message.slice(0, 60)})` };
+    }
+  }
+
+  // ============================================
+  // PRE-SIGN TRANSACTIONS (for speed)
+  // ============================================
+
+  async preSignTransactions() {
+    Logger.info('Pre-signing transactions for maximum speed...');
+    const wallets = this.walletManager.getWallets();
+
+    for (const wallet of wallets) {
+      try {
+        const nonce = await this.provider.getTransactionCount(wallet.address, 'pending');
+        const mintPriceWei = ethers.parseEther(config.mintPrice);
+        const totalValue = mintPriceWei * BigInt(config.mintAmount);
+
+        // Build transaction data
+        const iface = new ethers.Interface(MINT_FUNCTIONS_ABI);
+        let txData;
+
+        try {
+          txData = iface.encodeFunctionData(this.mintFunctionName, [config.mintAmount]);
+        } catch (e) {
+          // Fallback: try mint(uint256)
+          txData = iface.encodeFunctionData('mint(uint256)', [config.mintAmount]);
+        }
+
+        const gasSettings = await this.gasEstimator.getOptimalGasSettings();
+
+        const tx = {
+          to: config.contractAddress,
+          value: totalValue,
+          data: txData,
+          nonce: nonce,
+          gasLimit: BigInt(config.gasLimit),
+          chainId: config.chainId,
+          ...gasSettings,
+        };
+
+        const signedTx = await wallet.signTransaction(tx);
+        this.preSignedTxs.push({
+          wallet: wallet.address,
+          signedTx,
+          nonce,
+        });
+
+        const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
+        Logger.success(`Pre-signed TX for ${shortAddr} (nonce: ${nonce})`);
+      } catch (e) {
+        Logger.warn(`Failed to pre-sign for ${wallet.address.slice(0, 8)}...: ${e.message}`);
+      }
+    }
+
+    if (this.preSignedTxs.length > 0) {
+      Logger.success(`${this.preSignedTxs.length} transaction(s) pre-signed and ready!`);
+    }
+    Logger.divider();
+  }
+
+  // ============================================
+  // EXECUTE MINT - FCFS OPTIMIZED
   // ============================================
 
   async executeMint(wallet) {
     const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
-    Logger.mint(`🎯 Memulai PUBLIC MINT untuk wallet ${shortAddr}...`);
+    Logger.mint(`Minting for wallet ${shortAddr}...`);
 
-    const connectedSeaDrop = this.seaDropContract.connect(wallet);
+    const contract = new ethers.Contract(
+      config.contractAddress,
+      [...NFT_READ_ABI, ...MINT_FUNCTIONS_ABI],
+      wallet
+    );
 
-    // Hitung total value (mintPrice * quantity)
     const mintPriceWei = ethers.parseEther(config.mintPrice);
     const totalValue = mintPriceWei * BigInt(config.mintAmount);
 
     Logger.info(`   Value: ${ethers.formatEther(totalValue)} ETH (${config.mintAmount} x ${config.mintPrice} ETH)`);
 
-    // Get gas settings
+    // Get aggressive gas settings for FCFS
     const gasSettings = await this.gasEstimator.getOptimalGasSettings();
 
     const txOverrides = {
       value: totalValue,
+      gasLimit: BigInt(config.gasLimit),
       ...gasSettings,
     };
 
-    // Estimate gas limit
+    // Try to estimate gas (if fails, use configured gasLimit)
     try {
-      const estimated = await connectedSeaDrop.mintPublic.estimateGas(
-        config.contractAddress,
-        this.feeRecipient,
-        ethers.ZeroAddress, // minterIfNotPayer = payer sendiri
-        config.mintAmount,
-        { value: totalValue }
-      );
-      txOverrides.gasLimit = (estimated * BigInt(Math.floor(config.gasMultiplier * 100))) / 100n;
-      Logger.gas(`Estimated gas: ${estimated.toString()} (with buffer: ${txOverrides.gasLimit.toString()})`);
+      const fnName = this.mintFunctionName.split('(')[0];
+      if (contract[fnName]) {
+        const estimated = await contract[fnName].estimateGas(config.mintAmount, { value: totalValue });
+        txOverrides.gasLimit = (estimated * BigInt(Math.floor(config.gasMultiplier * 100))) / 100n;
+        Logger.gas(`Estimated gas: ${estimated.toString()} (buffered: ${txOverrides.gasLimit.toString()})`);
+      }
     } catch (e) {
-      Logger.warn(`Gas estimate gagal: ${e.message}`);
-      // Fallback gas limit untuk public mint di Ethereum
-      txOverrides.gasLimit = 200000n;
-      Logger.info(`Menggunakan fallback gasLimit: 200000`);
+      Logger.warn(`Gas estimate failed, using default ${config.gasLimit}: ${e.message.slice(0, 60)}`);
     }
 
-    // Execute SeaDrop mintPublic!
-    Logger.mint(`Calling SeaDrop.mintPublic(${config.contractAddress}, ${this.feeRecipient}, 0x0, ${config.mintAmount})`);
+    // Execute mint!
+    let tx;
+    const fnName = this.mintFunctionName.split('(')[0];
 
-    const tx = await connectedSeaDrop.mintPublic(
-      config.contractAddress,
-      this.feeRecipient,
-      ethers.ZeroAddress,
-      config.mintAmount,
-      txOverrides
-    );
+    try {
+      if (contract[fnName]) {
+        Logger.mint(`Calling ${this.mintFunctionName}(${config.mintAmount})...`);
+        tx = await contract[fnName](config.mintAmount, txOverrides);
+      } else {
+        // Fallback: raw transaction
+        Logger.mint(`Sending raw transaction to ${config.contractAddress}...`);
+        const iface = new ethers.Interface(MINT_FUNCTIONS_ABI);
+        const data = iface.encodeFunctionData(this.mintFunctionName, [config.mintAmount]);
+        tx = await wallet.sendTransaction({
+          to: config.contractAddress,
+          data,
+          ...txOverrides,
+        });
+      }
+    } catch (e) {
+      throw new Error(`Mint TX failed: ${e.message}`);
+    }
 
-    Logger.mint(`TX dikirim! Hash: ${tx.hash}`);
-    Logger.info(`Menunggu konfirmasi...`);
+    Logger.mint(`TX sent! Hash: ${tx.hash}`);
+    Logger.info(`   Waiting for confirmation...`);
 
     const receipt = await tx.wait(1);
 
     if (receipt.status === 1) {
-      Logger.success(`✅ MINT BERHASIL! Gas used: ${receipt.gasUsed.toString()}`);
-      Logger.success(`TX: https://etherscan.io/tx/${tx.hash}`);
+      Logger.success(`MINT SUCCESS! Gas used: ${receipt.gasUsed.toString()}`);
+      Logger.success(`TX: ${this.getExplorerUrl(tx.hash)}`);
       this.notifier.mintSuccess(tx.hash, shortAddr);
       return { success: true, txHash: tx.hash, wallet: shortAddr };
     } else {
-      Logger.error(`❌ TX reverted! Hash: ${tx.hash}`);
+      Logger.error(`TX REVERTED! Hash: ${tx.hash}`);
       this.notifier.mintFailed('Transaction reverted', shortAddr);
       return { success: false, txHash: tx.hash, wallet: shortAddr, error: 'reverted' };
+    }
+  }
+
+  // Send pre-signed transaction (fastest method)
+  async sendPreSignedTx(preSigned) {
+    const shortAddr = `${preSigned.wallet.slice(0, 6)}...${preSigned.wallet.slice(-4)}`;
+    Logger.mint(`Sending pre-signed TX for ${shortAddr}...`);
+
+    try {
+      const txResponse = await this.provider.broadcastTransaction(preSigned.signedTx);
+      Logger.mint(`TX broadcast! Hash: ${txResponse.hash}`);
+
+      const receipt = await txResponse.wait(1);
+      if (receipt.status === 1) {
+        Logger.success(`MINT SUCCESS (pre-signed)! Gas: ${receipt.gasUsed.toString()}`);
+        Logger.success(`TX: ${this.getExplorerUrl(txResponse.hash)}`);
+        this.notifier.mintSuccess(txResponse.hash, shortAddr);
+        return { success: true, txHash: txResponse.hash, wallet: shortAddr };
+      } else {
+        return { success: false, txHash: txResponse.hash, wallet: shortAddr, error: 'reverted' };
+      }
+    } catch (e) {
+      Logger.warn(`Pre-signed TX failed for ${shortAddr}: ${e.message}`);
+      // Fallback to normal mint
+      const wallet = this.walletManager.getWallets().find(w => w.address === preSigned.wallet);
+      if (wallet) {
+        return await this.executeMint(wallet);
+      }
+      return { success: false, wallet: shortAddr, error: e.message };
     }
   }
 
@@ -270,10 +408,10 @@ class MintBot {
         return result;
       } catch (error) {
         const shortAddr = `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`;
-        Logger.error(`Attempt ${attempt}/${config.maxRetries} gagal untuk ${shortAddr}: ${error.message}`);
-        
+        Logger.error(`Attempt ${attempt}/${config.maxRetries} failed for ${shortAddr}: ${error.message}`);
+
         if (attempt < config.maxRetries) {
-          Logger.info(`Retry dalam ${config.retryDelay}ms...`);
+          Logger.info(`Retrying in ${config.retryDelay}ms...`);
           await this.sleep(config.retryDelay);
         } else {
           this.notifier.mintFailed(error.message, shortAddr);
@@ -287,32 +425,40 @@ class MintBot {
     if (this.isMinting) return;
     this.isMinting = true;
 
-    const wallets = this.walletManager.getWallets();
-    Logger.mint(`🚀 EKSEKUSI PUBLIC MINT UNTUK ${wallets.length} WALLET(S)!`);
+    Logger.mint(`EXECUTING FCFS MINT!`);
     this.notifier.mintOpen();
 
-    // Mint semua wallet secara paralel
-    const mintPromises = wallets.map(wallet => this.executeMintWithRetry(wallet));
-    this.mintResults = await Promise.allSettled(mintPromises);
+    // Use pre-signed TXs if available
+    if (this.preSignedTxs.length > 0) {
+      Logger.info(`Using ${this.preSignedTxs.length} pre-signed transaction(s)...`);
+      const promises = this.preSignedTxs.map(ps => this.sendPreSignedTx(ps));
+      this.mintResults = await Promise.allSettled(promises);
+    } else {
+      // Normal mint for all wallets in parallel
+      const wallets = this.walletManager.getWallets();
+      Logger.info(`Minting for ${wallets.length} wallet(s) in parallel...`);
+      const mintPromises = wallets.map(wallet => this.executeMintWithRetry(wallet));
+      this.mintResults = await Promise.allSettled(mintPromises);
+    }
 
     // Summary
     Logger.divider();
-    Logger.info('📊 HASIL MINT:');
+    Logger.info('MINT RESULTS:');
     Logger.divider();
 
     let successCount = 0;
     for (const result of this.mintResults) {
       if (result.status === 'fulfilled' && result.value.success) {
         successCount++;
-        Logger.success(`✅ ${result.value.wallet} - TX: ${result.value.txHash}`);
+        Logger.success(`${result.value.wallet} - TX: ${result.value.txHash}`);
       } else {
         const val = result.status === 'fulfilled' ? result.value : { wallet: '?', error: result.reason };
-        Logger.error(`❌ ${val.wallet} - Error: ${val.error}`);
+        Logger.error(`${val.wallet} - Error: ${val.error}`);
       }
     }
 
     Logger.divider();
-    Logger.info(`Total: ${successCount}/${wallets.length} berhasil`);
+    Logger.info(`Total: ${successCount}/${this.mintResults.length} successful`);
     this.isMinting = false;
   }
 
@@ -321,27 +467,27 @@ class MintBot {
   // ============================================
 
   async runMonitorMode() {
-    Logger.info('🔍 Mode MONITOR - Menunggu PUBLIC MINT aktif...');
-    Logger.info(`Polling setiap ${config.pollInterval}ms`);
+    Logger.info('MODE: MONITOR - Waiting for mint to go live...');
+    Logger.info(`Polling every ${config.pollInterval}ms`);
     Logger.divider();
 
     let pollCount = 0;
 
     while (true) {
       pollCount++;
-      
+
       try {
-        const status = await this.checkPublicMintStatus();
-        const supply = await this.getSupplyInfo();
+        const status = await this.checkMintActive();
 
         if (status.active) {
-          Logger.success(`🟢 PUBLIC MINT TERBUKA! Supply: ${supply.totalSupply}/${supply.maxSupply}`);
+          Logger.success(`MINT IS LIVE! (detected via ${status.method})`);
           await this.mintAllWallets();
           break;
         } else {
-          // Update status setiap 10 poll
           if (pollCount % 10 === 0) {
-            Logger.info(`⏳ Public mint belum aktif... (poll #${pollCount}) Supply: ${supply.totalSupply}/${supply.maxSupply} | ${status.reason || ''}`);
+            let totalSupply = '?';
+            try { totalSupply = (await this.nftContract.totalSupply()).toString(); } catch (e) {}
+            Logger.info(`[Poll #${pollCount}] Mint not active | Supply: ${totalSupply} | ${status.reason || ''}`);
           }
         }
       } catch (error) {
@@ -353,8 +499,54 @@ class MintBot {
   }
 
   async runInstantMode() {
-    Logger.info('⚡ Mode INSTANT - Langsung mint PUBLIC!');
+    Logger.info('MODE: INSTANT - Minting immediately!');
     Logger.divider();
+    await this.mintAllWallets();
+  }
+
+  async runCountdownMode() {
+    let targetTime;
+
+    if (/^\d+$/.test(config.mintStartTime)) {
+      targetTime = parseInt(config.mintStartTime) * 1000; // Unix timestamp to ms
+    } else {
+      targetTime = new Date(config.mintStartTime).getTime();
+    }
+
+    if (isNaN(targetTime)) {
+      Logger.error('Invalid MINT_START_TIME! Use Unix timestamp or ISO date string');
+      process.exit(1);
+    }
+
+    const offset = config.countdownOffsetMs;
+    const executeTime = targetTime - offset;
+
+    Logger.info('MODE: COUNTDOWN');
+    Logger.info(`Target mint time: ${new Date(targetTime).toLocaleString()}`);
+    Logger.info(`TX will be sent ${offset}ms BEFORE target time`);
+    Logger.divider();
+
+    // Wait until execute time
+    while (Date.now() < executeTime) {
+      const remaining = executeTime - Date.now();
+      const secs = Math.floor(remaining / 1000);
+      const mins = Math.floor(secs / 60);
+      const hours = Math.floor(mins / 60);
+
+      if (remaining > 60000) {
+        Logger.info(`Countdown: ${hours}h ${mins % 60}m ${secs % 60}s remaining...`);
+        await this.sleep(Math.min(remaining - 1000, 30000));
+      } else if (remaining > 5000) {
+        Logger.warn(`Countdown: ${secs}s remaining...`);
+        await this.sleep(1000);
+      } else {
+        // Final milliseconds - tight loop
+        Logger.mint(`EXECUTING IN ${remaining}ms!`);
+        await this.sleep(remaining);
+      }
+    }
+
+    Logger.mint('TIME! EXECUTING MINT NOW!');
     await this.mintAllWallets();
   }
 
@@ -366,19 +558,42 @@ class MintBot {
     try {
       await this.initialize();
 
-      if (config.botMode === 'monitor') {
-        await this.runMonitorMode();
-      } else if (config.botMode === 'instant') {
-        await this.runInstantMode();
-      } else {
-        Logger.error(`Mode "${config.botMode}" tidak dikenal. Gunakan "monitor" atau "instant"`);
-        process.exit(1);
+      switch (config.botMode) {
+        case 'monitor':
+          await this.runMonitorMode();
+          break;
+        case 'instant':
+          await this.runInstantMode();
+          break;
+        case 'countdown':
+          await this.runCountdownMode();
+          break;
+        default:
+          Logger.error(`Unknown mode: "${config.botMode}". Use: monitor, instant, countdown`);
+          process.exit(1);
       }
     } catch (error) {
       Logger.error(`Fatal error: ${error.message}`);
       console.error(error);
       process.exit(1);
     }
+  }
+
+  // ============================================
+  // HELPERS
+  // ============================================
+
+  getExplorerUrl(txHash) {
+    const explorers = {
+      1: 'https://etherscan.io/tx/',
+      8453: 'https://basescan.org/tx/',
+      137: 'https://polygonscan.com/tx/',
+      42161: 'https://arbiscan.io/tx/',
+      10: 'https://optimistic.etherscan.io/tx/',
+      11155111: 'https://sepolia.etherscan.io/tx/',
+    };
+    const base = explorers[config.chainId] || 'https://etherscan.io/tx/';
+    return `${base}${txHash}`;
   }
 
   sleep(ms) {
@@ -390,11 +605,10 @@ class MintBot {
 // START BOT
 // ============================================
 
-const bot = new MintBot();
+const bot = new LobsterMintBot();
 
-// Handle graceful shutdown
 process.on('SIGINT', () => {
-  Logger.warn('\n⛔ Bot dihentikan oleh user');
+  Logger.warn('\nBot stopped by user');
   process.exit(0);
 });
 

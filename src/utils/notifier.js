@@ -4,12 +4,12 @@ class Notifier {
   constructor(enabled = true) {
     this.enabled = enabled;
     this.notifier = null;
-    
+
     if (enabled) {
       try {
         this.notifier = require('node-notifier');
       } catch (e) {
-        Logger.warn('node-notifier tidak tersedia, notifikasi desktop dinonaktifkan');
+        Logger.warn('node-notifier not available, desktop notifications disabled');
         this.enabled = false;
       }
     }
@@ -20,25 +20,25 @@ class Notifier {
 
     try {
       this.notifier.notify({
-        title: `🦎 Lacertians - ${title}`,
+        title: `Lobster NFT - ${title}`,
         message: message,
         sound: true,
       });
     } catch (e) {
-      // Silent fail untuk notifikasi
+      // Silent fail
     }
   }
 
   mintSuccess(txHash, wallet) {
-    this.notify('MINT BERHASIL! ✅', `Wallet: ${wallet}\nTx: ${txHash}`);
+    this.notify('MINT SUCCESS!', `Wallet: ${wallet}\nTx: ${txHash}`);
   }
 
   mintFailed(error, wallet) {
-    this.notify('MINT GAGAL ❌', `Wallet: ${wallet}\nError: ${error}`);
+    this.notify('MINT FAILED', `Wallet: ${wallet}\nError: ${error}`);
   }
 
   mintOpen() {
-    this.notify('MINT DIBUKA! 🚀', 'Mint sudah aktif! Bot sedang eksekusi...');
+    this.notify('MINT IS LIVE!', 'FCFS mint detected! Executing...');
   }
 }
 
